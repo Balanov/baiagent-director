@@ -6,6 +6,8 @@
 
 [Открыть веб-аудит](https://baiagent.ru/xray/) · [Скачать Director 0.8.1](https://baiagent.ru/xray/downloads/BAIagent-Director-Setup-Windows-0.8.1-x64.exe) · [Страница бесплатной версии](https://baiagent.ru/free/)
 
+[Исходный код на GitHub](https://github.com/Balanov/baiagent-director) · [GitHub Release 0.8.1](https://github.com/Balanov/baiagent-director/releases/tag/0.8.1)
+
 ![Результат работы Director](docs/images/director-result.png)
 
 ## Возможности
