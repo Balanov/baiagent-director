@@ -1,0 +1,49 @@
+name: test-and-release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            command: npm run dist:win
+            artifact: windows
+            files: release/*.exe
+          - os: ubuntu-latest
+            command: npm run dist:linux
+            artifact: linux
+            files: release/*.AppImage release/*.deb
+          - os: macos-latest
+            command: npm run dist:mac
+            artifact: macos
+            files: release/*.dmg release/*.zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: ${{ matrix.command }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: baiagent-director-${{ matrix.artifact }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+      - name: Attach artifacts to tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.files }}

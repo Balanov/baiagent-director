@@ -1,0 +1,116 @@
+{
+  "name": "baiagent-director",
+  "version": "0.8.1",
+  "description": "Local-first AI director that researches a company from public evidence and prepares verifiable pilot plans.",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.cjs",
+  "author": {
+    "name": "Баланов Антон Николаевич"
+  },
+  "homepage": "https://baiagent.ru/",
+  "license": "AGPL-3.0-or-later",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "build:xray": "vite build --mode xray",
+    "build:advisor": "vite build --mode advisor",
+    "build:enterprise": "vite build --mode enterprise",
+    "preview": "vite preview --host 0.0.0.0",
+    "test": "vitest run",
+    "electron:dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "dist": "npm run build && electron-builder",
+    "dist:win": "npm run build && node scripts/dist-win.mjs",
+    "dist:win:signed": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-windows-signing.ps1 && npm run build && node scripts/dist-win.mjs --signed",
+    "dist:linux": "npm run build && electron-builder --linux AppImage deb",
+    "dist:mac": "npm run build && electron-builder --mac dmg zip"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "lucide-react": "^0.468.0",
+    "mammoth": "^1.13.0",
+    "node-llama-cpp": "^3.22.2",
+    "pdf-parse": "^2.4.5",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^9.2.1",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5",
+    "wait-on": "^9.0.1"
+  },
+  "overrides": {
+    "simple-git": "4.0.2"
+  },
+  "build": {
+    "appId": "pro.balanov.baiagent.director",
+    "productName": "BAIagent Director",
+    "asarUnpack": [
+      "node_modules/node-llama-cpp/**/*",
+      "node_modules/@node-llama-cpp/**/*"
+    ],
+    "files": [
+      "dist/**/*",
+      "!dist/downloads/**/*",
+      "!dist/xray/downloads/**/*",
+      "electron/**/*",
+      "shared/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "icon": "build/icon.png",
+    "executableName": "BAIagent Director",
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico",
+      "legalTrademarks": "BAIagent; A2OS",
+      "requestedExecutionLevel": "asInvoker",
+      "signAndEditExecutable": true
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Office",
+      "artifactName": "BAIagent-Director-Linux-${version}-${arch}.${ext}"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.business",
+      "artifactName": "BAIagent-Director-macOS-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false,
+      "runAfterFinish": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "BAIagent Director",
+      "menuCategory": "BAIagent",
+      "installerIcon": "build/installerIcon.ico",
+      "uninstallerIcon": "build/uninstallerIcon.ico",
+      "installerHeader": "build/installerHeader.bmp",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/installerSidebar.bmp",
+      "installerLanguages": [
+        "ru_RU",
+        "en_US"
+      ],
+      "artifactName": "BAIagent-Director-Setup-Windows-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "BAIagent-Director-Portable-Windows-${version}-${arch}.${ext}"
+    }
+  }
+}
