@@ -33,11 +33,11 @@ Director — советник, а не автономный сотрудник: 
 
 [Скачать BAIagent Director 0.9.0 x64](https://baiagent.ru/xray/downloads/BAIagent-Director-Setup-Windows-0.9.0-x64.exe)
 
-**SHA-256:** `4fd9298c82343c2afb9b5743ccb227a344611fbd36c85455df4770fde9f38a61`
+**SHA-256:** `97b23c3f09cae286794b8fffa22c8c5e62a4b2247b1bf2431133e1c25d695ad5`
 
 [Скачать Balanov.PRO Enterprise 0.9.0 x64](https://balanov.pro/ai-audit/downloads/Balanov-PRO-Enterprise-Setup-Windows-0.9.0-x64.exe)
 
-**SHA-256:** `7200e2cc26e36a0b8c7e59d419e39531d7c079b1d3863b2f0e5b18a2df1c06f1`
+**SHA-256:** `efe7ec3e925c7d94085d6676d3dd4a2839e52c601d354a2a3ef03970d7a9a240`
 
 Это отдельные установщики `0.9.0`, а не переименованный `0.8.1`. Они пока не имеют Authenticode-подписи, поэтому Windows может предупредить о неизвестном издателе.
 
@@ -62,7 +62,7 @@ npm run build:advisor
 npm run build:enterprise
 ```
 
-Перед публикацией пройдены **161 автотест** и все пять перечисленных команд сборки/проверки. Для desktop, веб- и enterprise-режимов используются разные точки входа и серверные контуры; не следует считать их возможности взаимозаменяемыми.
+Перед публикацией пройдены **162 автотеста** и все пять перечисленных команд сборки/проверки. Для desktop, веб- и enterprise-режимов используются разные точки входа и серверные контуры; не следует считать их возможности взаимозаменяемыми.
 
 Пакеты desktop:
 
