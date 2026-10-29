@@ -3,6 +3,7 @@ import { ArrowRight, ArrowUpRight, Check, CheckCircle2, Download, FileSearch, Gl
 import { createEvidenceBasedFallback } from '../shared/fallback.js';
 import { buildPilotPlan } from '../shared/verification.js';
 import { researchErrorMessage } from '../shared/research-error.js';
+import { DIRECTOR_WINDOWS_DOWNLOAD, ENTERPRISE_WINDOWS_DOWNLOAD, RELEASE_VERSION } from '../shared/release.js';
 import ResultDashboard from './ResultDashboard.jsx';
 import './styles.css';
 import './audit.css';
@@ -10,7 +11,7 @@ import './audit.css';
 const DESKTOP = typeof window !== 'undefined' && Boolean(window.director?.isDesktop);
 const ENTERPRISE = import.meta.env.MODE === 'enterprise';
 const BASE = import.meta.env.BASE_URL;
-const WINDOWS_DOWNLOAD = '/xray/downloads/BAIagent-Director-Setup-Windows-0.8.1-x64.exe';
+const WINDOWS_DOWNLOAD = ENTERPRISE ? ENTERPRISE_WINDOWS_DOWNLOAD : DIRECTOR_WINDOWS_DOWNLOAD;
 const ANDROID_DOWNLOAD = 'https://baiagent.ru/xray/api/download.php?platform=android';
 const PRICE_DOWNLOAD = `${BASE}downloads/BAIagent-B2B-price.xlsx`;
 const STAGE_TARGETS = { site: 14, pages: 36, external: 52, model: 68, thinking: 88, verification: 97 };
@@ -93,12 +94,15 @@ function formatElapsed(seconds) {
 function PlatformDownloads() {
   const platform = mobilePlatform();
   if (DESKTOP || platform === 'ios' || platform === 'mobile') return null;
+  if (ENTERPRISE) return <section className="downloads-section downloads-simple" aria-label="Скачать Balanov.PRO Enterprise">
+    <a className="simple-download-primary" href={ENTERPRISE_WINDOWS_DOWNLOAD} download><Monitor size={22} /><span><strong>Скачать Balanov.PRO Enterprise</strong><small>Windows · версия {RELEASE_VERSION} · первичный аудит 0 ₽</small></span><Download size={18} /></a>
+  </section>;
   if (platform === 'android') return <section className="downloads-section mobile-download" aria-label="Скачать приложение для Android">
     <div className="platform-icon"><Smartphone size={22} /></div><div><h2>Приложение для Android</h2><p>Бесплатно · без WebView</p></div>
     <a className="platform-download" href={ANDROID_DOWNLOAD}><Download size={18} /> Скачать для Android</a>
   </section>;
   return <section className="downloads-section downloads-simple" aria-label="Скачать приложение">
-    <a className="simple-download-primary" href={WINDOWS_DOWNLOAD} download><Monitor size={22} /><span><strong>Скачать для Windows</strong><small>Полная версия · бесплатно</small></span><Download size={18} /></a>
+    <a className="simple-download-primary" href={WINDOWS_DOWNLOAD} download><Monitor size={22} /><span><strong>Скачать для Windows</strong><small>Версия {RELEASE_VERSION} · бесплатно</small></span><Download size={18} /></a>
     <details className="other-platforms"><summary>Другие платформы и прайс</summary><div><span><Smartphone size={17} /> Android</span><a href={ANDROID_DOWNLOAD}>Скачать</a><span><Laptop size={17} /> macOS и Linux</span><small>Скоро</small><a href={PRICE_DOWNLOAD} download>Прайс на решения BAIagent<ArrowUpRight size={15} /></a></div></details>
   </section>;
 }

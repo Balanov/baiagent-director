@@ -1,6 +1,7 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
+const fsSync = require('node:fs');
 
 const sessions = new Map();
 
@@ -16,9 +17,11 @@ async function analyzeFor(event, research) {
 }
 
 function createWindow() {
+  const enterpriseIndex = path.join(__dirname, '..', 'dist-enterprise', 'index.html');
+  const enterprise = app.isPackaged && fsSync.existsSync(enterpriseIndex);
   const window = new BrowserWindow({
     width: 1240, height: 840, minWidth: 920, minHeight: 640,
-    backgroundColor: '#f4f8ff', title: 'BAIagent Director',
+    backgroundColor: '#f4f8ff', title: enterprise ? 'Balanov.PRO Enterprise' : 'BAIagent Director',
     autoHideMenuBar: true,
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
@@ -28,7 +31,7 @@ function createWindow() {
     return { action: 'deny' };
   });
   if (process.env.VITE_DEV_SERVER_URL) window.loadURL(process.env.VITE_DEV_SERVER_URL);
-  else if (app.isPackaged) window.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  else if (app.isPackaged) window.loadFile(enterprise ? enterpriseIndex : path.join(__dirname, '..', 'dist', 'index.html'));
   else window.loadURL('http://127.0.0.1:5173');
 }
 

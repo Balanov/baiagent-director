@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, Bot, CheckCircle2, Download, LoaderCircle, LockKeyhole, Monitor, Send, ShieldCheck, Sparkles, UserRound } from 'lucide-react';
 import { answerAdvisor } from '../shared/advisor.js';
+import { DIRECTOR_WINDOWS_DOWNLOAD, ENTERPRISE_WINDOWS_DOWNLOAD } from '../shared/release.js';
 
-const WINDOWS_DOWNLOAD = '/xray/downloads/BAIagent-Director-Setup-Windows-0.8.1-x64.exe';
+const WINDOWS_DOWNLOAD = import.meta.env.MODE === 'enterprise' ? ENTERPRISE_WINDOWS_DOWNLOAD : DIRECTOR_WINDOWS_DOWNLOAD;
 const LOCAL_SUGGESTIONS = ['Что вы поняли о моём бизнесе?', 'Где главный риск?', 'Что сделать на этой неделе?', 'Как вы работаете офлайн?'];
 const WEB_SUGGESTIONS = ['Что продаёт компания?', 'Кто конкуренты?', 'Что говорят клиенты?', 'С чего начать пилот?'];
 

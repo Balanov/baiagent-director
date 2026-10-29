@@ -10,12 +10,13 @@ import AdvisorChat from './AdvisorChat.jsx';
 import Onboarding from './Onboarding.jsx';
 import EnterprisePanel from './EnterprisePanel.jsx';
 import AuditContract from './AuditContract.jsx';
+import { DIRECTOR_WINDOWS_DOWNLOAD, ENTERPRISE_WINDOWS_DOWNLOAD } from '../shared/release.js';
 
 const ENTERPRISE = import.meta.env.MODE === 'enterprise';
 
 const CATEGORY_LABELS = { revenue: 'Больше зарабатывать', cost: 'Меньше тратить', offering: 'Усилить предложение' };
 const SWOT_LABELS = { strength: 'Сильные стороны', weakness: 'Точки внимания', opportunity: 'Возможности', threat: 'Риски' };
-const WINDOWS_DOWNLOAD = '/xray/downloads/BAIagent-Director-Setup-Windows-0.8.1-x64.exe';
+const WINDOWS_DOWNLOAD = ENTERPRISE ? ENTERPRISE_WINDOWS_DOWNLOAD : DIRECTOR_WINDOWS_DOWNLOAD;
 function host(url) { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } }
 function dateLabel(value) { const date = new Date(value); return Number.isNaN(date.getTime()) ? 'Дата не указана' : new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' }).format(date); }
 function accent(value) { const hash = [...String(value)].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) % 360, 0); return `hsl(${hash} 68% 42%)`; }

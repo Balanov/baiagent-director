@@ -3,8 +3,9 @@ import { Arch, Platform, build } from 'electron-builder';
 
 delete process.env.ELECTRON_RUN_AS_NODE;
 const signed = process.argv.includes('--signed');
+const enterprise = process.argv.includes('--enterprise');
 const target = process.env.BAIAGENT_WINDOWS_TARGET || 'nsis';
-const output = resolve(process.env.BAIAGENT_WINDOWS_OUTPUT || (signed ? 'release-signed' : 'release'));
+const output = resolve(process.env.BAIAGENT_WINDOWS_OUTPUT || (signed ? 'release-signed' : enterprise ? 'release-enterprise' : 'release'));
 const electronDist = process.env.BAIAGENT_ELECTRON_DIST
   ? resolve(process.env.BAIAGENT_ELECTRON_DIST)
   : undefined;
@@ -27,6 +28,25 @@ await build({
   config: {
     directories: { output },
     electronDist,
+    ...(enterprise ? {
+      appId: 'pro.balanov.enterprise.advisor',
+      productName: 'Balanov.PRO Enterprise',
+      executableName: 'Balanov.PRO Enterprise',
+      extraMetadata: { productName: 'Balanov.PRO Enterprise' },
+      files: [
+        'dist-enterprise/**/*',
+        '!dist-enterprise/downloads/**/*',
+        '!dist-enterprise/xray/downloads/**/*',
+        'electron/**/*',
+        'shared/**/*',
+        'package.json',
+      ],
+      nsis: {
+        artifactName: 'Balanov-PRO-Enterprise-Setup-Windows-${version}-${arch}.${ext}',
+        shortcutName: 'Balanov.PRO Enterprise',
+        menuCategory: 'Balanov.PRO',
+      },
+    } : {}),
     ...(signed ? {
       win: {
         forceCodeSigning: true,

@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => ({
-  base: mode === 'enterprise' ? '/ai-audit/' : mode === 'advisor' ? '/advisor/' : mode === 'xray' ? '/xray/' : './',
+  base: process.env.BAIAGENT_DESKTOP_BUILD === '1' ? './' : mode === 'enterprise' ? '/ai-audit/' : mode === 'advisor' ? '/advisor/' : mode === 'xray' ? '/xray/' : './',
   plugins: [react(), {
     name: 'enterprise-metadata',
     transformIndexHtml(html) {

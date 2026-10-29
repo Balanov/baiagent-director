@@ -4,9 +4,11 @@
 
 Укажите сайт компании. Director исследует открытые страницы и внешние упоминания, отделяет факты от гипотез, показывает источники и помогает сформировать измеримый пилот. Windows-версия дополнительно работает с выбранными документами и локальной моделью.
 
-[Открыть веб-аудит](https://baiagent.ru/xray/) · [Скачать Director 0.8.1](https://baiagent.ru/xray/downloads/BAIagent-Director-Setup-Windows-0.8.1-x64.exe) · [Страница бесплатной версии](https://baiagent.ru/free/)
+[Открыть веб-аудит](https://baiagent.ru/xray/) · [Скачать Director 0.9.0](https://baiagent.ru/xray/downloads/BAIagent-Director-Setup-Windows-0.9.0-x64.exe) · [Страница бесплатной версии](https://baiagent.ru/free/)
 
-[Исходный код на GitHub](https://github.com/Balanov/baiagent-director) · [GitHub Release 0.8.1](https://github.com/Balanov/baiagent-director/releases/tag/0.8.1)
+[Открыть Balanov.PRO Enterprise](https://balanov.pro/ai-audit/) · [Скачать Balanov.PRO Enterprise 0.9.0](https://balanov.pro/ai-audit/downloads/Balanov-PRO-Enterprise-Setup-Windows-0.9.0-x64.exe)
+
+[Исходный код на GitHub](https://github.com/Balanov/baiagent-director) · [GitHub Release 0.9.0](https://github.com/Balanov/baiagent-director/releases/tag/0.9.0)
 
 ![Результат работы Director](docs/images/director-result.png)
 
@@ -29,11 +31,15 @@ Director — советник, а не автономный сотрудник: 
 
 ## Установка для Windows
 
-[Скачать BAIagent Director 0.8.1 x64](https://baiagent.ru/xray/downloads/BAIagent-Director-Setup-Windows-0.8.1-x64.exe)
+[Скачать BAIagent Director 0.9.0 x64](https://baiagent.ru/xray/downloads/BAIagent-Director-Setup-Windows-0.9.0-x64.exe)
 
-**SHA-256:** `d45c528e34f8b9d6f8a7ae034e5ba71f8e99cb41e23e793ea97b4754633d91dd`
+**SHA-256:** `4fd9298c82343c2afb9b5743ccb227a344611fbd36c85455df4770fde9f38a61`
 
-Публичный установщик скачан и сверен с этой контрольной суммой перед подготовкой GitHub-релиза. Он пока не имеет Authenticode-подписи, поэтому Windows может предупредить о неизвестном издателе.
+[Скачать Balanov.PRO Enterprise 0.9.0 x64](https://balanov.pro/ai-audit/downloads/Balanov-PRO-Enterprise-Setup-Windows-0.9.0-x64.exe)
+
+**SHA-256:** `7200e2cc26e36a0b8c7e59d419e39531d7c079b1d3863b2f0e5b18a2df1c06f1`
+
+Это отдельные установщики `0.9.0`, а не переименованный `0.8.1`. Они пока не имеют Authenticode-подписи, поэтому Windows может предупредить о неизвестном издателе.
 
 При первом запуске без готовой Ollama приложение может загрузить около 2,4 ГБ модели. Оставьте запас места на диске; рекомендуется 8 ГБ RAM или больше.
 

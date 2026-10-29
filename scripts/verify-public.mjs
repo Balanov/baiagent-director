@@ -1,71 +1,155 @@
 import fs from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const base = (process.argv[2] || 'https://baiagent.ru').replace(/\/$/, '');
-const expected = {
-  version: '0.8.1',
-  file: 'BAIagent-Director-Setup-Windows-0.8.1-x64.exe',
-  sizeBytes: 442004410,
-  sha256: 'd45c528e34f8b9d6f8a7ae034e5ba71f8e99cb41e23e793ea97b4754633d91dd',
-};
-const report = { base, checks: {} };
+const products = [
+  {
+    id: 'director',
+    base: 'https://baiagent.ru',
+    path: '/xray',
+    title: 'BAIagent — ИИ-советник для бизнеса',
+    version: '0.9.0',
+    file: 'BAIagent-Director-Setup-Windows-0.9.0-x64.exe',
+    sizeBytes: 442077092,
+    sha256: '4fd9298c82343c2afb9b5743ccb227a344611fbd36c85455df4770fde9f38a61',
+    manifest: 'current.json',
+    apiPlatform: 'windows',
+  },
+  {
+    id: 'enterprise',
+    base: 'https://balanov.pro',
+    path: '/ai-audit',
+    title: 'Balanov.PRO — ИИ-советник для бизнеса',
+    version: '0.9.0',
+    file: 'Balanov-PRO-Enterprise-Setup-Windows-0.9.0-x64.exe',
+    sizeBytes: 442081976,
+    sha256: '7200e2cc26e36a0b8c7e59d419e39531d7c079b1d3863b2f0e5b18a2df1c06f1',
+    manifest: 'enterprise.json',
+    apiPlatform: 'enterprise',
+  },
+];
+
+const output = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../artifacts/public-090');
+await fs.mkdir(output, { recursive: true });
+const report = { version: '0.9.0', checkedAt: new Date().toISOString(), products: {} };
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
+
 async function fetchChecked(url, options = {}) {
-  const response = await fetch(url, { redirect: 'follow', ...options });
+  const response = await fetch(url, { redirect: 'follow', cache: 'no-store', ...options });
   assert(response.ok, `${url}: HTTP ${response.status}`);
   return response;
 }
-async function checkDownload(url) {
-  const response = await fetchChecked(url, { headers: { Range: 'bytes=0-1023' } });
-  assert([200, 206].includes(response.status), `${url}: неожиданный HTTP ${response.status}`);
-  const total = response.status === 206
-    ? Number(response.headers.get('content-range')?.match(/\/(\d+)$/)?.[1])
-    : Number(response.headers.get('content-length'));
-  assert(total === expected.sizeBytes, `${url}: размер ${total}, ожидался ${expected.sizeBytes}`);
-  const reader = response.body.getReader();
-  const first = await reader.read();
-  assert(!first.done && first.value.length > 0, `${url}: пустой ответ`);
-  if (url.endsWith('.exe')) assert(first.value[0] === 0x4d && first.value[1] === 0x5a, `${url}: файл не является Windows-установщиком`);
-  await reader.cancel();
-  return { status: response.status, sizeBytes: total, firstBytes: first.value.length };
+
+async function verifyPage(product) {
+  const url = `${product.base}${product.path}/?release=0.9.0`;
+  const html = await fetchChecked(url).then(response => response.text());
+  assert(html.includes('<div id="root"></div>'), `${product.id}: missing app root`);
+  assert(html.includes(product.title), `${product.id}: wrong product title`);
+  assert(!html.includes('0.8.1'), `${product.id}: stale release reference`);
+  const assetPaths = [...html.matchAll(/(?:src|href)="([^"]*assets\/[^"]+\.(?:js|css))"/g)].map(match => match[1]);
+  assert(assetPaths.some(asset => asset.endsWith('.js')), `${product.id}: no JS asset`);
+  for (const asset of assetPaths) {
+    const content = await fetchChecked(new URL(asset, url)).then(response => response.text());
+    if (asset.endsWith('.js')) {
+      const expectedName = product.id === 'enterprise' ? 'Balanov-PRO-Enterprise-Setup-Windows-' : 'BAIagent-Director-Setup-Windows-';
+      assert(content.includes(expectedName), `${product.id}: wrong installer product in JS`);
+      assert(content.includes('0.9.0'), `${product.id}: stale JS release`);
+    }
+  }
+  const manifestUrl = `${product.base}${product.path}/downloads/${product.manifest}?release=0.9.0`;
+  const manifest = await fetchChecked(manifestUrl).then(response => response.json());
+  for (const field of ['version', 'file', 'sizeBytes', 'sha256']) {
+    assert(manifest[field] === product[field], `${product.id}: manifest ${field} mismatch`);
+  }
+  return { page: url, assets: assetPaths, manifest };
 }
 
-try {
-  const xray = await fetchChecked(`${base}/xray/`).then(response => response.text());
-  assert(xray.includes('<div id="root"></div>'), 'Xray: не найден корень приложения');
-  report.checks.xray = { status: 200, bytes: xray.length };
+async function downloadAndHash(product) {
+  const url = `${product.base}${product.path}/downloads/${product.file}?release=0.9.0`;
+  const response = await fetchChecked(url, { signal: AbortSignal.timeout(240000) });
+  assert(Number(response.headers.get('content-length')) === product.sizeBytes, `${product.id}: HTTP size mismatch`);
+  const filePath = path.join(output, product.file);
+  const handle = await fs.open(filePath, 'w');
+  const hash = createHash('sha256');
+  let sizeBytes = 0;
+  let first;
+  try {
+    for await (const chunk of response.body) {
+      if (!first) first = Buffer.from(chunk);
+      sizeBytes += chunk.length;
+      hash.update(chunk);
+      await handle.write(chunk);
+    }
+  } finally {
+    await handle.close();
+  }
+  assert(first?.[0] === 0x4d && first?.[1] === 0x5a, `${product.id}: not a Windows executable`);
+  assert(sizeBytes === product.sizeBytes, `${product.id}: downloaded size ${sizeBytes}`);
+  const sha256 = hash.digest('hex');
+  assert(sha256 === product.sha256, `${product.id}: downloaded SHA-256 ${sha256}`);
+  return { url, filePath, sizeBytes, sha256 };
+}
 
-  const free = await fetchChecked(`${base}/free/`).then(response => response.text());
-  assert(free.includes(expected.file), 'Free: ссылка не ведёт на Windows 0.8.1');
-  assert(free.includes('Ваш бизнес.'), 'Free: не найден основной оффер');
-  report.checks.free = { status: 200, bytes: free.length, windows: expected.version };
+async function verifyApiDownload(product) {
+  const url = `${product.base}${product.path}/api/download.php?platform=${product.apiPlatform}`;
+  const response = await fetchChecked(url, { headers: { Range: 'bytes=0-1023' } });
+  const contentRange = response.headers.get('content-range');
+  const total = response.status === 206
+    ? Number(contentRange?.match(/\/(\d+)$/)?.[1])
+    : Number(response.headers.get('content-length'));
+  assert(total === product.sizeBytes, `${product.id}: API download size mismatch`);
+  const reader = response.body.getReader();
+  const first = await reader.read();
+  assert(!first.done && first.value[0] === 0x4d && first.value[1] === 0x5a, `${product.id}: API returned non-executable content`);
+  await reader.cancel();
+  return { url, status: response.status, sizeBytes: total };
+}
 
-  const currentResponse = await fetchChecked(`${base}/xray/downloads/current.json`, { cache: 'no-store' });
-  const current = await currentResponse.json();
-  for (const [key, value] of Object.entries(expected)) assert(current[key] === value, `current.json: неверное поле ${key}`);
-  report.checks.current = current;
-
-  report.checks.directDownload = await checkDownload(`${base}/xray/downloads/${expected.file}`);
-  report.checks.apiDownload = await checkDownload(`${base}/xray/api/download.php?platform=windows`);
-
-  const researchUrl = `${base}/xray/api/research.php?url=${encodeURIComponent('https://www.citilink.ru')}`;
-  const researchResponse = await fetchChecked(researchUrl, { signal: AbortSignal.timeout(170000) });
-  const research = await researchResponse.json();
-  assert(!research.error, `Research: ${research.error}`);
-  assert(research.companyName && Array.isArray(research.sources) && research.sources.length > 0, 'Research: пустой результат');
-  assert(research.coverage?.pages > 0, 'Research: собственные страницы не прочитаны');
-  assert(research.marketContext?.subject, 'Research: не определён предмет рынка');
-  report.checks.research = {
+async function verifyResearch(product) {
+  const url = `${product.base}${product.path}/api/research.php?url=${encodeURIComponent('https://firestarters.ru/')}`;
+  const research = await fetchChecked(url, { signal: AbortSignal.timeout(240000) }).then(response => response.json());
+  assert(!research.error, `${product.id}: research error ${research.error}`);
+  assert(research.companyName && research.sources?.length > 0, `${product.id}: empty research`);
+  assert(research.offerings?.length > 0, `${product.id}: offerings missing`);
+  assert(research.offerings.every(item => item.image), `${product.id}: offering images missing`);
+  assert(research.reviews?.length > 0, `${product.id}: reviews missing`);
+  await fs.writeFile(path.join(output, `research-${product.id}.json`), JSON.stringify(research, null, 2));
+  return {
     company: research.companyName,
-    subject: research.marketContext.subject,
-    pages: research.coverage.pages,
-    external: research.coverage.external,
+    pages: research.coverage?.pages,
     sources: research.sources.length,
-    competitors: research.competitors?.length || 0,
-    reviews: research.reviews?.length || 0,
+    offerings: research.offerings.length,
+    offeringsWithImages: research.offerings.filter(item => item.image).length,
+    reviews: research.reviews.length,
   };
-  await fs.writeFile(new URL('../artifacts/public-research-check.json', import.meta.url), JSON.stringify(research, null, 2));
+}
+
+const only = process.argv.find(argument => argument.startsWith('--product='))?.split('=')[1];
+const selectedProducts = only ? products.filter(product => product.id === only) : products;
+assert(selectedProducts.length > 0, `Unknown product: ${only}`);
+const reportFile = path.join(output, `verification${only ? `-${only}` : ''}.json`);
+try {
+  for (const product of selectedProducts) {
+    console.log(`Checking ${product.id}...`);
+    report.products[product.id] = {};
+    report.products[product.id].page = await verifyPage(product);
+    report.products[product.id].api = await verifyApiDownload(product);
+    report.products[product.id].download = await downloadAndHash(product);
+    if (process.argv.includes('--research')) report.products[product.id].research = await verifyResearch(product);
+  }
+  const free = await fetchChecked('https://baiagent.ru/free/?release=0.9.0').then(response => response.text());
+  assert(free.includes(products[0].file), 'Free page has a stale Director download');
+  assert(free.includes('Версия 0.9.0'), 'Free page does not show version 0.9.0');
+  assert(!free.includes('0.8.1'), 'Free page still contains 0.8.1');
+  const host = await fetchChecked('https://balanov.pro/?release=0.9.0').then(response => response.text());
+  assert((host.match(/href="\/ai-audit\/"/g) || []).length === 3, 'Balanov.PRO must have three audit links');
+  report.landingPages = { free: '0.9.0', balanovAuditLinks: 3 };
+  await fs.writeFile(reportFile, JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 } catch (error) {
-  console.error(JSON.stringify({ ...report, error: error.message }, null, 2));
+  report.error = [error.message, error.cause?.message].filter(Boolean).join(': ');
+  await fs.writeFile(reportFile, JSON.stringify(report, null, 2));
+  console.error(JSON.stringify(report, null, 2));
   process.exitCode = 1;
 }
