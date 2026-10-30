@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { companySearchName, isRelevantSearchResult, isReviewMaterial, parsePage } from '../electron/research.mjs';
-import { competitorNameFrom, createMarketSearchPlan, isCompetitorCandidate, isRelevantMarketNews, marketSubject } from '../shared/market-plan.js';
+import { competitorNameFrom, createMarketSearchPlan, isCompetitorCandidate, isRelevantCompanyReview, isRelevantMarketNews, marketSubject } from '../shared/market-plan.js';
 
 const catalogHtml = readFileSync(new URL('./fixtures/firestarters-catalog.html', import.meta.url), 'utf8');
 
@@ -58,6 +58,20 @@ describe('firestarters.ru regression', () => {
     expect(isCompetitorCandidate(supplier, plan, 'https://firestarters.ru/')).toBe(false);
     expect(isCompetitorCandidate({ ...supplier, title: 'Спички и средства для розжига', text: 'Купить спички и средства для розжига по цене продавца.', url: 'https://www.avito.ru/catalog/rozzhig' }, plan, 'https://firestarters.ru/')).toBe(false);
     expect(isReviewMaterial({ title: 'Аналитика, продажи бренда', url: 'https://wildbox.ru/brand-analytics/image', text: 'Средняя оценка товаров и 0 отзывов. Объём продаж бренда за неделю.' })).toBe(false);
+  });
+
+  it('retains a real company review count on a trusted map profile', () => {
+    const map = {
+      title: 'Имидж Боровичи, management company — Yandex Maps',
+      url: 'https://yandex.com/maps/org/imidzh_borovichi/143237440277/',
+      text: 'Имидж Боровичи. Адрес. Контакты. Время работы. 7 отзывов.',
+      contentOrigin: 'search-snippet',
+    };
+    expect(isReviewMaterial(map)).toBe(true);
+    expect(isReviewMaterial({ ...map, url: 'https://example.org/maps/org/not-a-map-profile', text: 'Имидж Боровичи. Оставьте отзыв.' })).toBe(false);
+    expect(isReviewMaterial({ ...map, text: 'Пока нет отзывов.' })).toBe(false);
+    expect(isRelevantCompanyReview(map, { companyName: 'ООО «Имидж-Боровичи»', siteUrl: 'https://firestarters.ru/', sources: [], offerings: [] })).toBe(true);
+    expect(isRelevantCompanyReview({ ...map, text: 'Management company «Имидж Боровичи». Read 7 reviews. Get directions in Yandex Maps.' }, { companyName: 'ООО «Имидж-Боровичи»', siteUrl: 'https://firestarters.ru/', sources: [], offerings: researchWithCatalog().offerings, marketContext: { industry: 'manufacturing', subject: 'товары для розжига' } })).toBe(true);
   });
 
   it('uses real base brands instead of CH, WWW and generic category names', () => {

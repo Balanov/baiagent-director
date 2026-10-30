@@ -4,7 +4,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 
 const root = path.resolve(__dirname, '..');
-const output = process.env.BAIAGENT_WINDOWS_OUTPUT || 'release-110-node';
+const output = process.env.BAIAGENT_WINDOWS_OUTPUT || 'release-111-node';
 const enterprise = process.env.BAIAGENT_SMOKE_PRODUCT === 'enterprise';
 const product = enterprise ? 'enterprise' : 'director';
 const executableName = enterprise ? 'Balanov.PRO Enterprise.exe' : 'BAIagent Director.exe';
@@ -12,7 +12,7 @@ const profile = path.join(root, 'artifacts', `packaged-profile-${output.replace(
 const executable = process.env.BAIAGENT_EXECUTABLE
   ? path.resolve(process.env.BAIAGENT_EXECUTABLE)
   : path.join(root, output, 'win-unpacked', executableName);
-const evidence = path.join(root, 'validation', 'packaged-110', product);
+const evidence = path.join(root, 'validation', 'packaged-111', product);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function waitForTarget() {
@@ -37,8 +37,7 @@ async function main() {
   const checks = [];
   const screenshots = [];
   const activity = new Set();
-  const replayPath = process.env.BAIAGENT_RESEARCH_RESULT;
-  const replay = replayPath ? await fs.readFile(path.resolve(replayPath), 'utf8') : '';
+  if (process.env.BAIAGENT_RESEARCH_RESULT) throw new Error('Replay отключён: проверка установщика выполняет только реальное исследование');
   const startedAt = Date.now();
   const checkpoint = name => console.log(`CHECKPOINT ${name} ${Math.round((Date.now() - startedAt) / 1000)}s`);
   try {
@@ -67,7 +66,7 @@ async function main() {
     const screenshot = async name => {
       await call('Page.bringToFront');
       await evaluate('document.fonts.ready');
-      await delay(1100);
+      await delay(1110);
       await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
       await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
       const image = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
@@ -84,12 +83,6 @@ async function main() {
     checks.push('desktop-bridge');
     checkpoint('desktop-bridge');
     await evaluate(`(() => {
-      const original = window.director.research;
-      window.director.research = async (...args) => {
-        const result = ${replay ? `JSON.parse(${JSON.stringify(replay)})` : 'await original(...args)'};
-        window.__releaseResearchResult = result;
-        return result;
-      };
       const input = document.querySelector('#company-url');
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'https://teremok.ru/');
       input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -108,10 +101,8 @@ async function main() {
     }
     if (!mode) throw new Error('Исследование собранной версии не завершилось за отведённое время');
     if (!mode.startsWith('qwen')) throw new Error(`Вместо локальной модели сработал резервный алгоритм: ${mode}`);
-    checks.push(`${replay ? 'replayed-real-analysis' : 'real-analysis'}:${mode}`);
-    if (!replay) assert.ok(activity.size >= 2, 'Не показаны фактические этапы исследования');
-    const captured = await evaluate('window.__releaseResearchResult');
-    if (!replay && captured) await fs.writeFile(path.join(evidence, 'research-result.json'), JSON.stringify(captured));
+    checks.push(`real-analysis:${mode}`);
+    assert.ok(activity.size >= 2, 'Не показаны фактические этапы исследования');
     checkpoint('audit-complete');
     await screenshot('audit');
     const contract = await evaluate(`({
@@ -177,7 +168,7 @@ async function main() {
       checks.push('enterprise-vendor-prices-and-architecture');
       await screenshot('enterprise');
     }
-    const report = { status: 'passed', checkedAt: new Date().toISOString(), version: '1.1.0', product, executable, output, mode, chat, contract, enterpriseContract, checks, activity: [...activity], screenshots, limitation: 'Проверен путь локальной модели через Ollama. Встроенная GGUF-модель и подпись установщика проверяются отдельно.' };
+    const report = { status: 'passed', checkedAt: new Date().toISOString(), version: '1.1.1', product, executable, output, mode, chat, contract, enterpriseContract, checks, activity: [...activity], screenshots, limitation: 'Проверен путь локальной модели через Ollama. Встроенная GGUF-модель и подпись установщика проверяются отдельно.' };
     await fs.writeFile(path.join(evidence, 'verification.json'), JSON.stringify(report, null, 2));
     console.log('PACKAGED_SMOKE_PASSED', JSON.stringify({ mode, checks }));
   } finally {

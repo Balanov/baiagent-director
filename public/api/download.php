@@ -7,8 +7,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
 }
 $downloads = [
     'android' => ['BAIagent-Director-Android-0.6.0.apk', 'application/vnd.android.package-archive'],
-    'windows' => ['BAIagent-Director-Setup-Windows-1.1.0-x64.exe', 'application/vnd.microsoft.portable-executable'],
-    'enterprise' => ['Balanov-PRO-Enterprise-Setup-Windows-1.1.0-x64.exe', 'application/vnd.microsoft.portable-executable'],
+    'windows' => ['BAIagent-Director-Setup-Windows-1.1.1-x64.exe', 'application/vnd.microsoft.portable-executable'],
+    'enterprise' => ['Balanov-PRO-Enterprise-Setup-Windows-1.1.1-x64.exe', 'application/vnd.microsoft.portable-executable'],
 ];
 $platform = (string)($_GET['platform'] ?? '');
 if (!isset($downloads[$platform])) {

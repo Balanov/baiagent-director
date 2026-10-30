@@ -349,7 +349,11 @@ function reviewCompanyAliases(context, sources) {
     for (const quoted of value.matchAll(/[«"“]([^»"”]{3,70})[»"”]/g)) parts.push(quoted[1]);
     for (const part of parts) {
       const alias = normalizedReviewText(part);
-      if (alias.length >= 3 && alias.length <= 70 && !/^(?:главная|официальный сайт|компания)$/i.test(alias)) aliases.add(alias);
+      if (alias.length >= 3 && alias.length <= 70 && !/^(?:главная|официальный сайт|компания)$/i.test(alias)) {
+        aliases.add(alias);
+        const spacedAlias = alias.replace(/\s*[-–—]+\s*/g, ' ').trim();
+        if (spacedAlias !== alias && spacedAlias.split(/\s+/).every(token => token.length >= 3)) aliases.add(spacedAlias);
+      }
     }
   }
   const ownBrand = host(siteUrl).split('.')[0];
@@ -439,9 +443,13 @@ export function isRelevantCompanyReview(item = {}, context = {}) {
   const companyAliases = reviewCompanyAliases(context, sources);
   const offeringAliases = reviewOfferingAliases(context, sources);
   const fuzzyOfferingMatch = hasFuzzyOfferingMention(text, offeringAliases, companyAliases);
-  const directCompanyTitle = companyAliases.some(alias => title.includes(alias));
-  const companyInTitle = hasPurposefulMention(title, companyAliases) || (directCompanyTitle && fuzzyOfferingMatch);
-  const companyInMaterial = hasPurposefulMention(text, companyAliases);
+  const matchingTitle = title.replace(/\s*[-–—]+\s*/g, ' ');
+  const directCompanyTitle = companyAliases.some(alias => matchingTitle.includes(alias));
+  const companyInTitle = hasPurposefulMention(matchingTitle, companyAliases) || (directCompanyTitle && fuzzyOfferingMatch);
+  const searchSnippet = item.contentOrigin === 'search-snippet';
+  const companyInMaterial = hasPurposefulMention(searchSnippet ? body : text, companyAliases);
+  const exactBodyOffering = offeringAliases.some(name => body.includes(name));
+  const snippetOfferingMatch = !searchSnippet || exactBodyOffering || hasFuzzyOfferingMention(body, offeringAliases, companyAliases);
   const exactOfferingMatch = offeringAliases.some(name => text.includes(name));
   const offeringMatch = exactOfferingMatch || (companyInTitle && fuzzyOfferingMatch);
   const supplierBeforeCompany = companyAliases.some(alias => {
@@ -457,12 +465,15 @@ export function isRelevantCompanyReview(item = {}, context = {}) {
   }
   const market = context.marketContext || research.marketContext || {};
   if (market.industry === 'logistics' && /(?:^|[\s.])shopping\b|шопп?инг/i.test(title)) return false;
+  const trustedCompanyMap = /(?:^|\.)yandex\.[a-z.]+$/i.test(host(item.url)) && /\/maps\/org\//i.test(path)
+    || /(?:^|\.)2gis\.[a-z.]+$/i.test(host(item.url)) && /\/firm\//i.test(path);
+  const directCompanyReview = trustedCompanyMap && companyInTitle && companyInMaterial;
   const subject = market.subject;
-  if (subject && !offeringMatch) {
+  if (subject && !offeringMatch && !directCompanyReview) {
     const sameMarket = GENERIC_SUBJECTS.has(subject) ? context.marketContext?.relevance?.test(text) : subjectPattern(subject).test(text);
     if (!sameMarket) return false;
   }
-  return companyInMaterial || offeringMatch;
+  return companyInMaterial || offeringMatch && snippetOfferingMatch;
 }
 
 function decodePunycodeLabel(label) {

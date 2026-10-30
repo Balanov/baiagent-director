@@ -1,6 +1,6 @@
 {
   "name": "baiagent-director",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Local-first AI director that researches a company from public evidence and prepares verifiable pilot plans.",
   "private": true,
   "type": "module",

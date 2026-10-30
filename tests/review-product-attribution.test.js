@@ -18,6 +18,18 @@ describe('product review attribution', () => {
     }, research)).toBe(true);
   });
 
+  it('rejects a search snippet whose quote describes another manufacturer', () => {
+    const research = context('ООО «Имидж-Боровичи»', 'https://firestarters.ru/', 'Производство спичек и товаров для розжига.', 'Спички для пикника 30 шт.');
+    const review = {
+      title: 'Спички Имидж- Боровичи для пикника "Дача" 30 шт. — отзывы',
+      url: 'https://irecommend.ru/content/real-product-review',
+      text: 'Итак, сегодня мой отзыв будет посвящен спичкам бытовым ГОСТ 1820-2001 от фирмы-производителя Красная… Подставка для подогрева чайника Glassware Сердечки.',
+      contentOrigin: 'search-snippet',
+    };
+    expect(isRelevantCompanyReview(review, research)).toBe(false);
+    expect(isRelevantCompanyReview({ ...review, text: 'Купил спички для пикника 30 шт.: быстро разжигаются, рекомендую. 5 отзывов.' }, research)).toBe(true);
+  });
+
   it('does not turn a compatible third-party part into the manufacturer review', () => {
     const research = context('КАМАЗ', 'https://kamaz.example/', 'Производство грузовых автомобилей.', 'КАМАЗ 54901');
     expect(isRelevantCompanyReview({

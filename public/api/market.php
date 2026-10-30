@@ -367,7 +367,9 @@ function is_review_material(array $item): bool {
     if (preg_match('~аналитик[аи]|продажи бренда|объ[её]м продаж~iu', $text)) return false;
     $host = strtolower(preg_replace('~^www\.~', '', parse_url($item['url'] ?? '', PHP_URL_HOST) ?: ''));
     $reviewHost = (bool)preg_match('~(?:^|\.)(?:irecommend\.ru|otzovik\.com)$~i', $host);
-    return (bool)preg_match('~отзыв|рейтинг|оценк|review|rating~iu', $text) && ($reviewHost || (bool)preg_match('~\d+\s*(?:отзыв|reviews?)|\d[.,]\d\s*(?:из\s*5|оценок|рейтинг|$)|рекоменд(?:ую|уем|уете|уешь|уют|овал[аи]?)(?:\s|$|[,.!?])|не рекоменд|негативн|положительн|достоинств|недостатк|плюсы|минусы|впечатлен|качество|персонал|доставк|возврат~iu', $text));
+    $path = (string)(parse_url($item['url'] ?? '', PHP_URL_PATH) ?: '');
+    $trustedMapReview = (preg_match('~(?:^|\.)yandex\.[a-z.]+$~i', $host) && preg_match('~/maps/org/~i', $path)) || (preg_match('~(?:^|\.)2gis\.[a-z.]+$~i', $host) && preg_match('~/firm/~i', $path));
+    return (bool)preg_match('~отзыв|рейтинг|оценк|review|rating~iu', $text) && ($reviewHost || ($trustedMapReview && preg_match('~\d+\s*(?:отзыв|reviews?)~iu', $text)) || (bool)preg_match('~\d+\s*(?:отзыв|reviews?)|\d[.,]\d\s*(?:из\s*5|оценок|рейтинг|$)|рекоменд(?:ую|уем|уете|уешь|уют|овал[аи]?)(?:\s|$|[,.!?])|не рекоменд|негативн|положительн|достоинств|недостатк|плюсы|минусы|впечатлен|качество|персонал|доставк|возврат~iu', $text));
 }
 function review_normalized(string $value): string {
     return trim(preg_replace('/\s+/u', ' ', str_replace(['«','»','"','“','”',"'",'’','®','™'], '', lower_text(clean_text($value)))) ?? '');
@@ -385,7 +387,12 @@ function review_company_aliases(array $context, array $sources): array {
         if (preg_match_all('/[«"“]([^»"”]{3,70})[»"”]/u', $value, $matches)) $parts = array_merge($parts, $matches[1]);
         foreach ($parts as $part) {
             $alias = review_normalized($part); $length = text_length($alias);
-            if ($length >= 3 && $length <= 70 && !preg_match('~^(?:главная|официальный сайт|компания)$~iu', $alias)) $aliases[$alias] = true;
+            if ($length >= 3 && $length <= 70 && !preg_match('~^(?:главная|официальный сайт|компания)$~iu', $alias)) {
+                $aliases[$alias] = true;
+                $spacedAlias = trim(preg_replace('~\s*[-–—]+\s*~u', ' ', $alias) ?? '');
+                $words = preg_split('/\s+/u', $spacedAlias, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+                if ($spacedAlias !== $alias && $words && count(array_filter($words, fn($word) => text_length($word) < 3)) === 0) $aliases[$spacedAlias] = true;
+            }
         }
     }
     $siteUrl = $context['siteUrl'] ?? $research['siteUrl'] ?? $research['requestedUrl'] ?? $home['url'] ?? '';
@@ -453,8 +460,13 @@ function is_relevant_company_review(array $item, array $context): bool {
     if (!preg_match('~отзыв|рейтинг|оценк|review|rating~iu', $text) || (!preg_match($detailPattern, $text) && !$hasExperience)) return false;
     $companyAliases = review_company_aliases($context, $sources); $offeringAliases = review_offering_aliases($context, $sources);
     $fuzzyOffering = review_fuzzy_offering($text, $offeringAliases, $companyAliases);
-    $directCompanyTitle = (bool)array_filter($companyAliases, fn($alias) => str_contains($title, $alias));
-    $companyInTitle = review_purposeful_mention($title, $companyAliases) || ($directCompanyTitle && $fuzzyOffering); $companyInMaterial = review_purposeful_mention($text, $companyAliases);
+    $matchingTitle = preg_replace('~\s*[-–—]+\s*~u', ' ', $title) ?? $title;
+    $directCompanyTitle = (bool)array_filter($companyAliases, fn($alias) => str_contains($matchingTitle, $alias));
+    $companyInTitle = review_purposeful_mention($matchingTitle, $companyAliases) || ($directCompanyTitle && $fuzzyOffering);
+    $searchSnippet = ($item['contentOrigin'] ?? '') === 'search-snippet';
+    $companyInMaterial = review_purposeful_mention($searchSnippet ? $body : $text, $companyAliases);
+    $exactBodyOffering = (bool)array_filter($offeringAliases, fn($alias) => str_contains($body, $alias));
+    $snippetOfferingMatch = !$searchSnippet || $exactBodyOffering || review_fuzzy_offering($body, $offeringAliases, $companyAliases);
     $exactOffering = false; foreach ($offeringAliases as $alias) if (str_contains($text, $alias)) { $exactOffering = true; break; }
     $offeringMatch = $exactOffering || ($companyInTitle && $fuzzyOffering);
     $supplierBeforeCompany = false;
@@ -472,11 +484,14 @@ function is_relevant_company_review(array $item, array $context): bool {
     }
     $market = $context['marketContext'] ?? $research['marketContext'] ?? [];
     if (($market['industry'] ?? '') === 'logistics' && preg_match('~(?:^|[\s.])shopping\b|шопп?инг~iu', $title)) return false;
-    if (!empty($market['subject']) && !$offeringMatch) {
+    $reviewHost = strtolower(preg_replace('~^www\.~', '', parse_url($item['url'] ?? '', PHP_URL_HOST) ?: ''));
+    $trustedCompanyMap = (preg_match('~(?:^|\.)yandex\.[a-z.]+$~i', $reviewHost) && preg_match('~/maps/org/~i', $path)) || (preg_match('~(?:^|\.)2gis\.[a-z.]+$~i', $reviewHost) && preg_match('~/firm/~i', $path));
+    $directCompanyReview = $trustedCompanyMap && $companyInTitle && $companyInMaterial;
+    if (!empty($market['subject']) && !$offeringMatch && !$directCompanyReview) {
         $sameMarket = in_array($market['subject'], ['продукция', 'товары', 'оборудование', 'профессиональные услуги', 'программные продукты', 'цифровые государственные сервисы'], true)
             ? (!empty($market['relevance']) && preg_match($market['relevance'], $text))
             : preg_match(market_subject_pattern($market['subject']), $text);
         if (!$sameMarket) return false;
     }
-    return $companyInMaterial || $offeringMatch;
+    return $companyInMaterial || ($offeringMatch && $snippetOfferingMatch);
 }

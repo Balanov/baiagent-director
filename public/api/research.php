@@ -542,7 +542,7 @@ function search_web(string $company, string $site, array $offerings, array $comp
         $items[] = ['id' => 'web-pending', 'kind' => $kind, 'offeringName' => $offeringName ?: null, 'url' => $item['url'], 'title' => $item['title'], 'text' => $item['text'], 'publishedAt' => $item['publishedAt'] ?? null, 'contentOrigin' => 'search-snippet', 'retrievedAt' => gmdate('c')];
     };
     $searches = 0;
-    foreach (['"' . $searchName . '" отзывы рейтинг', '"' . $searchName . '"', '"' . $searchName . '" клиенты партнеры новости'] as $query) {
+    foreach (['"' . $searchName . '" отзывы рейтинг', '"' . $searchName . '" отзывы Яндекс Карты', '"' . $searchName . '"', '"' . $searchName . '" клиенты партнеры новости'] as $query) {
         try {
             if ($searches++) usleep(900000);
             foreach (search_provider($query) as $item) {
@@ -554,6 +554,15 @@ function search_web(string $company, string $site, array $offerings, array $comp
     if (count($items) < 4) foreach (search_reference_web($searchName) as $item) {
         if (company_owned_url($item['url'], $identity) || !relevant_search_result($item['title'], $item['url'], $item['text'], $site, $company)) continue;
         $add($item, 'search-snippet');
+    }
+    if (!array_filter($items, fn($item) => $item['kind'] === 'review-snippet')) {
+        try {
+            if ($searches++) usleep(900000);
+            foreach (search_provider('"' . $searchName . '" отзывы клиентов Яндекс 2ГИС') as $item) {
+                if (empty($item['title']) || empty($item['text']) || company_owned_url($item['url'], $identity) || !relevant_search_result($item['title'], $item['url'], $item['text'], $site, $company) || !$reviewRelevant($item)) continue;
+                $add($item, 'review-snippet');
+            }
+        } catch (Throwable $error) { $warnings[] = $error->getMessage(); }
     }
     $hasOwnText = (bool)array_filter($companySources, fn($source) => strlen(trim((string)($source['text'] ?? ''))) >= 40);
     if (!$hasOwnText) {
@@ -645,6 +654,12 @@ function enrich_external(array &$web, string $site, array $plan, array &$warning
             $source['pageType'] = $parsed['pageType']; $source['ogType'] = $parsed['ogType']; $source['schemaTypes'] = $parsed['schemaTypes'];
             $readable = strlen($parsed['text']) >= 40 && !str_contains($parsed['text'], '�') && !preg_match('~ничего не найдено|проверьте адрес страницы|доступ запрещ[её]н~iu', limit_text($parsed['text'], 1000));
             if ($readable) {
+                $sourceHost = strtolower(preg_replace('~^www\.~', '', parse_url($source['url'], PHP_URL_HOST) ?: ''));
+                $sourcePath = (string)(parse_url($source['url'], PHP_URL_PATH) ?: '');
+                $mapProfile = (preg_match('~(?:^|\.)yandex\.[a-z.]+$~i', $sourceHost) && preg_match('~/maps/org/~i', $sourcePath)) || (preg_match('~(?:^|\.)2gis\.[a-z.]+$~i', $sourceHost) && preg_match('~/firm/~i', $sourcePath));
+                $mixedEmploymentReviews = preg_match('~отзыв[а-яё]* сотрудник|отзыв[а-яё]* о работодател|условия труда|зарплат|карьерных возможност~iu', $parsed['text']);
+                // Keep only the verified company rating, not an employee's review presented as customer experience.
+                if ($source['kind'] === 'review-snippet' && $mapProfile && $mixedEmploymentReviews && preg_match('~\d+\s*(?:отзыв|reviews?)~iu', $source['text'])) continue;
                 $source['text'] = $parsed['text']; $source['contentOrigin'] = 'full-page'; $source['retrievedAt'] = gmdate('c');
                 if ($source['kind'] === 'review-snippet' && (!is_review_material($source) || !is_relevant_company_review($source, $reviewContext))) { $source['discard'] = true; continue; }
                 if ($source['kind'] === 'competitor-candidate') {

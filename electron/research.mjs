@@ -587,8 +587,11 @@ export function isReviewMaterial(item) {
   const text = `${item.title || ''} ${item.text || ''}`;
   if (/отзыв(?:ы|ов)?\s+(?:о\s+)?сотрудник|отзыв[а-яё]* о работодател|работа в |условия труда|зарплат|карьерных возможност/i.test(text)) return false;
   if (/аналитик[аи]|продажи бренда|объ[её]м продаж/i.test(text)) return false;
-  const reviewHost = /(?:^|\.)(?:irecommend\.ru|otzovik\.com)$/i.test(host(item.url));
-  return /отзыв|рейтинг|оценк|review|rating/i.test(text) && (reviewHost || /\d+\s*(?:отзыв|reviews?)|\d[.,]\d\s*(?:из\s*5|оценок|рейтинг|$)|рекоменд|не рекоменд|негативн|положительн|достоинств|недостатк|плюсы|минусы|впечатлен|качество|персонал|доставк|возврат/i.test(text));
+  const hostname = host(item.url); const path = pagePath(item.url || '');
+  const reviewHost = /(?:^|\.)(?:irecommend\.ru|otzovik\.com)$/i.test(hostname);
+  const trustedMapReview = /(?:^|\.)yandex\.[a-z.]+$/i.test(hostname) && /\/maps\/org\//i.test(path)
+    || /(?:^|\.)2gis\.[a-z.]+$/i.test(hostname) && /\/firm\//i.test(path);
+  return /отзыв|рейтинг|оценк|review|rating/i.test(text) && (reviewHost || trustedMapReview && /\d+\s*(?:отзыв|reviews?)/i.test(text) || /\d+\s*(?:отзыв|reviews?)|\d[.,]\d\s*(?:из\s*5|оценок|рейтинг|$)|рекоменд|не рекоменд|негативн|положительн|достоинств|недостатк|плюсы|минусы|впечатлен|качество|персонал|доставк|возврат/i.test(text));
 }
 
 export async function searchPublicWeb(companyName, siteUrl, offerings, onProgress, companySources = []) {
@@ -599,6 +602,7 @@ export async function searchPublicWeb(companyName, siteUrl, offerings, onProgres
   const companyOwned = url => { try { const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase(); return [hostname, baseHostname].some(owned => host === owned || host.endsWith(`.${owned}`)); } catch { return true; } };
   const companySearches = [
     { query: `"${searchName}" отзывы рейтинг`, message: 'Ищу реальные отзывы и оценки' },
+    { query: `"${searchName}" отзывы Яндекс Карты`, message: 'Проверяю оценки компании на картах' },
     { query: `"${searchName}"`, message: 'Ищу независимые упоминания о компании' },
     { query: `"${searchName}" клиенты партнеры новости`, message: 'Проверяю клиентов, партнёрства и деловой след' },
   ];
@@ -721,6 +725,11 @@ async function enrichExternal(external, onProgress, siteUrl, plan, reviewContext
         const parsed = parsePage(page.text, page.url, source.id); source.url = page.url; source.pageType = parsed.pageType;
         const readable = parsed.text.length >= 40 && !parsed.text.includes('�') && !/ничего не найдено|проверьте адрес страницы|доступ запрещ[её]н/i.test(parsed.text.slice(0, 1000));
         if (readable) {
+          const mapProfile = /(?:^|\.)yandex\.[a-z.]+$/i.test(host(source.url)) && /\/maps\/org\//i.test(pagePath(source.url))
+            || /(?:^|\.)2gis\.[a-z.]+$/i.test(host(source.url)) && /\/firm\//i.test(pagePath(source.url));
+          const mixedEmploymentReviews = /отзыв[а-яё]* сотрудник|отзыв[а-яё]* о работодател|условия труда|зарплат|карьерных возможност/i.test(parsed.text);
+          // Do not attribute an employee's review on a mixed map profile to customers.
+          if (source.kind === 'review-snippet' && mapProfile && mixedEmploymentReviews && /\d+\s*(?:отзыв|reviews?)/i.test(source.text)) continue;
           source.text = parsed.text;
           source.contentOrigin = 'full-page';
           source.retrievedAt = new Date().toISOString();

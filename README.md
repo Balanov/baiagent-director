@@ -4,11 +4,11 @@
 
 Укажите сайт компании. Director исследует открытые страницы и внешние упоминания, отделяет факты от гипотез, показывает источники и помогает сформировать измеримый пилот. Windows-версия дополнительно работает с выбранными документами и локальной моделью.
 
-[Открыть веб-аудит](https://baiagent.ru/xray/) · [Скачать Director 1.1.0](https://baiagent.ru/xray/downloads/BAIagent-Director-Setup-Windows-1.1.0-x64.exe) · [Страница бесплатной версии](https://baiagent.ru/free/)
+[Открыть веб-аудит](https://baiagent.ru/xray/) · [Скачать Director 1.1.1](https://baiagent.ru/xray/downloads/BAIagent-Director-Setup-Windows-1.1.1-x64.exe) · [Страница бесплатной версии](https://baiagent.ru/free/)
 
-[Открыть Balanov.PRO Enterprise](https://balanov.pro/ai-audit/) · [Скачать Balanov.PRO Enterprise 1.1.0](https://balanov.pro/ai-audit/downloads/Balanov-PRO-Enterprise-Setup-Windows-1.1.0-x64.exe)
+[Открыть Balanov.PRO Enterprise](https://balanov.pro/ai-audit/) · [Скачать Balanov.PRO Enterprise 1.1.1](https://balanov.pro/ai-audit/downloads/Balanov-PRO-Enterprise-Setup-Windows-1.1.1-x64.exe)
 
-[Исходный код на GitHub](https://github.com/Balanov/baiagent-director) · [GitHub Release 1.1.0](https://github.com/Balanov/baiagent-director/releases/tag/1.1.0)
+[Исходный код на GitHub](https://github.com/Balanov/baiagent-director) · [GitHub Release 1.1.1](https://github.com/Balanov/baiagent-director/releases/tag/v1.1.1)
 
 ![Результат работы Director](docs/images/director-result.png)
 
@@ -31,15 +31,15 @@ Director — советник, а не автономный сотрудник: 
 
 ## Установка для Windows
 
-[Скачать BAIagent Director 1.1.0 x64](https://baiagent.ru/xray/downloads/BAIagent-Director-Setup-Windows-1.1.0-x64.exe)
+[Скачать BAIagent Director 1.1.1 x64](https://baiagent.ru/xray/downloads/BAIagent-Director-Setup-Windows-1.1.1-x64.exe)
 
-**SHA-256:** `97b23c3f09cae286794b8fffa22c8c5e62a4b2247b1bf2431133e1c25d695ad5`
+**SHA-256:** `03dd2b9870a77e253825a4b8bf8df71c6432ce1829fe0b7d2cf0dd0a314b8544`
 
-[Скачать Balanov.PRO Enterprise 1.1.0 x64](https://balanov.pro/ai-audit/downloads/Balanov-PRO-Enterprise-Setup-Windows-1.1.0-x64.exe)
+[Скачать Balanov.PRO Enterprise 1.1.1 x64](https://balanov.pro/ai-audit/downloads/Balanov-PRO-Enterprise-Setup-Windows-1.1.1-x64.exe)
 
-**SHA-256:** `efe7ec3e925c7d94085d6676d3dd4a2839e52c601d354a2a3ef03970d7a9a240`
+**SHA-256:** `6fc280867145f17e7e5104ed36d6262de582e78a05736e717838d88cfa30fa57`
 
-Это отдельные установщики `1.1.0`, а не переименованный `0.8.1`. Они пока не имеют Authenticode-подписи, поэтому Windows может предупредить о неизвестном издателе.
+Это отдельные установщики `1.1.1`, а не переименованный `0.8.1`. Они пока не имеют Authenticode-подписи, поэтому Windows может предупредить о неизвестном издателе.
 
 При первом запуске без готовой Ollama приложение может загрузить около 2,4 ГБ модели. Оставьте запас места на диске; рекомендуется 8 ГБ RAM или больше.
 
@@ -62,7 +62,7 @@ npm run build:advisor
 npm run build:enterprise
 ```
 
-Перед публикацией пройдены **344 автотеста** в 27 файлах и все пять перечисленных команд сборки/проверки. Дополнительно проверены четыре UI-сценария Director и Enterprise в development- и production-сборках: компания и товары, изображения и источники, документы, выбор → план → пилот и «Подключить 0 руб.». Для desktop, веб- и enterprise-режимов используются разные точки входа и серверные контуры; не следует считать их возможности взаимозаменяемыми.
+Перед публикацией пройдены **346 автотестов** в 27 файлах и все пять перечисленных команд сборки/проверки. Дополнительно проверены четыре UI-сценария Director и Enterprise в development- и production-сборках: компания и товары, изображения и источники, документы, выбор → план → пилот и «Подключить 0 руб.». Для desktop, веб- и enterprise-режимов используются разные точки входа и серверные контуры; не следует считать их возможности взаимозаменяемыми.
 
 Пакеты desktop:
 
