@@ -24,8 +24,8 @@
     "dist:win:enterprise": "node scripts/build-desktop.mjs --enterprise && node scripts/dist-win.mjs --enterprise",
     "dist:win:signed": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check-windows-signing.ps1 && npm run build && node scripts/dist-win.mjs --signed",
     "dist:win:store": "npm run build && node scripts/dist-win.mjs --store",
-    "dist:linux": "npm run build && electron-builder --linux AppImage deb",
-    "dist:mac": "npm run build && electron-builder --mac dmg zip"
+    "dist:linux": "npm run build && electron-builder --linux AppImage deb --publish never",
+    "dist:mac": "npm run build && electron-builder --mac dmg zip --publish never"
   },
   "dependencies": {
     "cheerio": "^1.2.0",

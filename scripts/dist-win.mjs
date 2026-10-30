@@ -37,6 +37,7 @@ if (signed && !['http:', 'https:'].includes(new URL(timestampUrl).protocol)) {
 
 await build({
   targets: Platform.WINDOWS.createTarget([target], Arch.x64),
+  publish: null,
   config: {
     directories: { output },
     electronDist,
