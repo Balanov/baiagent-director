@@ -26,11 +26,15 @@ jobs:
           - os: ubuntu-latest
             command: npm run dist:linux
             artifact: linux
-            files: release/*.AppImage release/*.deb
+            files: |
+              release/*.AppImage
+              release/*.deb
           - os: macos-latest
             command: npm run dist:mac
             artifact: macos
-            files: release/*.dmg release/*.zip
+            files: |
+              release/*.dmg
+              release/*.zip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

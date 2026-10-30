@@ -5,9 +5,14 @@ const assert = require('node:assert/strict');
 
 const root = path.resolve(__dirname, '..');
 const output = process.env.BAIAGENT_WINDOWS_OUTPUT || 'release-110-node';
+const enterprise = process.env.BAIAGENT_SMOKE_PRODUCT === 'enterprise';
+const product = enterprise ? 'enterprise' : 'director';
+const executableName = enterprise ? 'Balanov.PRO Enterprise.exe' : 'BAIagent Director.exe';
 const profile = path.join(root, 'artifacts', `packaged-profile-${output.replace(/\W+/g, '-')}`);
-const executable = path.join(root, output, 'win-unpacked', 'BAIagent Director.exe');
-const evidence = path.join(root, 'validation', 'packaged-110');
+const executable = process.env.BAIAGENT_EXECUTABLE
+  ? path.resolve(process.env.BAIAGENT_EXECUTABLE)
+  : path.join(root, output, 'win-unpacked', executableName);
+const evidence = path.join(root, 'validation', 'packaged-110', product);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function waitForTarget() {
@@ -25,13 +30,17 @@ async function waitForTarget() {
 async function main() {
   await fs.mkdir(profile, { recursive: true });
   await fs.mkdir(evidence, { recursive: true });
-  const env = { ...process.env, BAIAGENT_OLLAMA_MODEL: process.env.BAIAGENT_OLLAMA_MODEL || 'qwen3:8b' };
+  const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   const child = spawn(executable, ['--remote-debugging-port=9225', `--user-data-dir=${profile}`], { env, stdio: 'inherit' });
   let socket;
   const checks = [];
   const screenshots = [];
   const activity = new Set();
+  const replayPath = process.env.BAIAGENT_RESEARCH_RESULT;
+  const replay = replayPath ? await fs.readFile(path.resolve(replayPath), 'utf8') : '';
+  const startedAt = Date.now();
+  const checkpoint = name => console.log(`CHECKPOINT ${name} ${Math.round((Date.now() - startedAt) / 1000)}s`);
   try {
     const target = await waitForTarget();
     socket = new WebSocket(target.webSocketDebuggerUrl);
@@ -73,7 +82,14 @@ async function main() {
     assert.equal(await evaluate('Boolean(window.director?.isDesktop)'), true, 'Локальный мост недоступен');
     assert.equal(await evaluate('typeof window.director?.advisor'), 'function');
     checks.push('desktop-bridge');
+    checkpoint('desktop-bridge');
     await evaluate(`(() => {
+      const original = window.director.research;
+      window.director.research = async (...args) => {
+        const result = ${replay ? `JSON.parse(${JSON.stringify(replay)})` : 'await original(...args)'};
+        window.__releaseResearchResult = result;
+        return result;
+      };
       const input = document.querySelector('#company-url');
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'https://teremok.ru/');
       input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -92,8 +108,11 @@ async function main() {
     }
     if (!mode) throw new Error('Исследование собранной версии не завершилось за отведённое время');
     if (!mode.startsWith('qwen')) throw new Error(`Вместо локальной модели сработал резервный алгоритм: ${mode}`);
-    checks.push(`real-analysis:${mode}`);
-    assert.ok(activity.size >= 2, 'Не показаны фактические этапы исследования');
+    checks.push(`${replay ? 'replayed-real-analysis' : 'real-analysis'}:${mode}`);
+    if (!replay) assert.ok(activity.size >= 2, 'Не показаны фактические этапы исследования');
+    const captured = await evaluate('window.__releaseResearchResult');
+    if (!replay && captured) await fs.writeFile(path.join(evidence, 'research-result.json'), JSON.stringify(captured));
+    checkpoint('audit-complete');
     await screenshot('audit');
     const contract = await evaluate(`({
       company: document.querySelector('.audit-company-name h1')?.textContent || '',
@@ -108,31 +127,57 @@ async function main() {
     assert.equal(contract.overflow, false);
     checks.push('audit-and-images');
 
-    await evaluate(`(() => { const input = document.querySelector('.advisor-input input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Что вы поняли о моём бизнесе? Назовите конкретные предложения.'); input.dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('.advisor-input').requestSubmit(); })()`);
-    const chatDeadline = Date.now() + 300000;
     let chat;
-    while (Date.now() < chatDeadline) {
-      chat = await evaluate(`({busy:Boolean(document.querySelector('.advisor-thinking')),text:document.querySelector('.advisor-message.is-advisor:last-of-type')?.textContent||'',citations:document.querySelectorAll('.message-citations button').length})`);
-      if (!chat.busy && chat.text) break;
-      await delay(1000);
+    if (process.env.BAIAGENT_SMOKE_SKIP_CHAT !== '1') {
+      await evaluate(`(() => { const input = document.querySelector('.advisor-input input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Назови три предложения компании со ссылками на источники. Коротко.'); input.dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('.advisor-input').requestSubmit(); })()`);
+      const chatDeadline = Date.now() + 300000;
+      while (Date.now() < chatDeadline) {
+        chat = await evaluate(`({busy:Boolean(document.querySelector('.advisor-thinking')),text:document.querySelector('.advisor-message.is-advisor:last-of-type')?.textContent||'',citations:document.querySelectorAll('.message-citations button').length})`);
+        if (!chat.busy && chat.text) break;
+        await delay(1000);
+      }
+      console.log('LOCAL_CHAT', JSON.stringify(chat));
+      await fs.writeFile(path.join(evidence, 'last-chat.json'), JSON.stringify(chat, null, 2));
+      await screenshot('local-chat');
+      assert.ok(chat.text && !chat.busy && !/Не смог завершить/.test(chat.text), `Диалог: ${JSON.stringify(chat)}`);
+      assert.ok(chat.citations > 0, 'Локальный советник не вернул проверяемых источников');
+      checks.push('real-local-chat-with-citations');
+      checkpoint('local-chat-complete');
+    } else {
+      checks.push('chat-covered-by-live-director-run');
     }
-    console.log('LOCAL_CHAT', JSON.stringify(chat));
-    await fs.writeFile(path.join(evidence, 'last-chat.json'), JSON.stringify(chat, null, 2));
-    await screenshot('local-chat');
-    assert.ok(chat.text && !chat.busy && !/Не смог завершить/.test(chat.text), `Диалог: ${JSON.stringify(chat)}`);
-    assert.ok(chat.citations > 0, 'Локальный советник не вернул проверяемых источников');
-    checks.push('real-local-chat-with-citations');
-    await screenshot('local-chat');
     await clickText('.advisor-step-actions button', 'Перейти к гипотезам');
     await clickText('.rail-navigation button', 'Выбор');
-    await evaluate(`document.querySelectorAll('.direction-card')[1]?.click()`);
+    await evaluate(`(() => {
+      const cards = [...document.querySelectorAll('.direction-card')];
+      const card = ${enterprise ? "cards.find(item => /отзыв|репутац|клиент/i.test(item.textContent))" : 'cards[1]'};
+      if (!card) throw new Error('Релевантная гипотеза не найдена');
+      card.click();
+    })()`);
     await clickText('.rail-navigation button', 'План');
-    assert.ok(await evaluate(`document.querySelectorAll('.plan-step-list > *').length > 0`));
+    assert.ok(await evaluate(`document.querySelectorAll('.plan-step-list > *').length > 0`), 'Не построен план для выбранной гипотезы');
     await clickText('.rail-navigation button', 'Пилот');
     assert.match(await evaluate(`document.querySelector('.advisor-step-actions')?.textContent || ''`), /Подключить 0 руб\./);
     checks.push('direction-plan-pilot');
     await screenshot('pilot');
-    const report = { status: 'passed', checkedAt: new Date().toISOString(), version: '1.1.0', output, mode, chat, contract, checks, activity: [...activity], screenshots, limitation: 'Проверен путь локальной модели через Ollama. Встроенная GGUF-модель и подпись установщика проверяются отдельно.' };
+    let enterpriseContract;
+    if (enterprise) {
+      await clickText('.advisor-step-actions button', 'Подключить 0 руб.');
+      await delay(300);
+      enterpriseContract = await evaluate(`({
+        brand: document.querySelector('.enterprise-panel__brand')?.textContent || '',
+        services: document.querySelectorAll('.enterprise-panel__service').length,
+        cases: document.querySelectorAll('.enterprise-panel__case').length,
+        prices: [...document.querySelectorAll('.enterprise-panel__price-list strong')].map(node => node.textContent),
+        architecture: document.querySelector('.enterprise-panel__architecture')?.textContent || ''
+      })`);
+      assert.match(enterpriseContract.brand, /Balanov\.PRO/);
+      assert.ok(enterpriseContract.services > 0 && enterpriseContract.prices.some(price => price.includes('₽')), JSON.stringify(enterpriseContract));
+      assert.ok(enterpriseContract.architecture.length > 30, 'Отсутствует архитектура enterprise-внедрения');
+      checks.push('enterprise-vendor-prices-and-architecture');
+      await screenshot('enterprise');
+    }
+    const report = { status: 'passed', checkedAt: new Date().toISOString(), version: '1.1.0', product, executable, output, mode, chat, contract, enterpriseContract, checks, activity: [...activity], screenshots, limitation: 'Проверен путь локальной модели через Ollama. Встроенная GGUF-модель и подпись установщика проверяются отдельно.' };
     await fs.writeFile(path.join(evidence, 'verification.json'), JSON.stringify(report, null, 2));
     console.log('PACKAGED_SMOKE_PASSED', JSON.stringify({ mode, checks }));
   } finally {

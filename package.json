@@ -99,6 +99,8 @@
         "deb"
       ],
       "category": "Office",
+      "maintainer": "Баланов Антон Николаевич",
+      "desktopName": "baiagent-director.desktop",
       "artifactName": "BAIagent-Director-Linux-${version}-${arch}.${ext}"
     },
     "mac": {

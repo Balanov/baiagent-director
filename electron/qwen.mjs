@@ -99,7 +99,16 @@ async function embeddedSession(userDataPath, onProgress) {
   return embeddedPromise;
 }
 
-function evidencePrompt(research, strict = false, swotFocus = false) {
+export function groundedEvidenceAnchor(research) {
+  const sources = new Map((research.sources || []).map(source => [source.id, source]));
+  return [...(research.offerings || []), ...(research.reviews || [])].find(item => {
+    const source = sources.get(item?.sourceId);
+    const quote = String(item?.quote || '').trim();
+    return source?.text && quote.length >= 20 && String(source.text).includes(quote);
+  }) || null;
+}
+
+export function evidencePrompt(research, strict = false, swotFocus = false) {
   const usable = research.sources.filter(source => source.text);
   const company = usable.filter(source => source.kind === 'company-site').sort((a, b) => (b.offerings?.length || 0) - (a.offerings?.length || 0)).slice(0, 5);
   const externalPool = usable.filter(source => source.kind !== 'company-site' && source.kind !== 'local-document');
@@ -117,7 +126,9 @@ function evidencePrompt(research, strict = false, swotFocus = false) {
     alternatives: (research.alternatives || []).slice(0, 8),
     coverage: research.coverage,
   };
-  const correction = strict ? '\nПредыдущий ответ не прошёл проверку. Теперь верни РОВНО ОДНУ возможность. В evidence обязательно скопируй дословную непрерывную цитату из text одного источника и укажи его id. Не используй числа вне цитаты. Поле swot не заполняй.' : '';
+  const anchor = strict ? groundedEvidenceAnchor(research) : null;
+  const anchorName = anchor?.displayName || anchor?.name || '';
+  const correction = strict ? `\nПредыдущий ответ не прошёл проверку. Теперь верни РОВНО ОДНУ возможность, непосредственно связанную с этим проверенным основанием: ${JSON.stringify(anchor ? { sourceId: anchor.sourceId, quote: anchor.quote } : null)}. Скопируй sourceId и quote в evidence без каких-либо изменений, сокращений и многоточий. ${anchorName ? `В title дословно сохрани название предложения: ${JSON.stringify(anchorName)}.` : ''} Title, why и action должны относиться именно к этой цитате. Не используй цифры ни в одном поле ответа, включая unknowns; проверенные числа разрешено сохранить только внутри дословной quote. Не добавляй swot.` : '';
   const focus = swotFocus ? '\nДополнительный проход: первый SWOT был неполным. Внимательно используй товары, отзывы и альтернативы ниже. Заполни только обоснованные категории SWOT и три разные категории возможностей, если источники это позволяют. Не выдумывай недостающие факты.' : '';
   return `Исследуй компанию ${research.companyName}. Верни JSON по правилам. Источники:\n${JSON.stringify(evidence)}\nСтруктурированные данные, уже проверенные по источникам:\n${JSON.stringify(market)}${correction}${focus}`;
 }
@@ -134,11 +145,7 @@ export async function analyzeWithQwen(research, { userDataPath, onProgress }) {
         if (verified.opportunities.length) break;
       }
       if (!verified?.opportunities.length) throw new Error('Local model did not produce source-verified opportunities after two attempts');
-      if (verified.swot.length < 2 && research.sources.some(source => source.kind !== 'company-site')) {
-        onProgress?.({ stage: 'verification', message: 'Дополняю управленческий обзор по отзывам и альтернативам' });
-        const deeper = verifyAnalysis(parseModelJson(await promptOllama(ollamaModel, research, false, onProgress, true)), research.sources);
-        verified = { ...deeper, opportunities: verified.opportunities, swot: deeper.swot.length >= verified.swot.length ? deeper.swot : verified.swot };
-      }
+      onProgress?.({ stage: 'verification', message: 'Дополняю обзор только уже проверенными источниками' });
       const fallback = createEvidenceBasedFallback(research.sources, research.requestedUrl, research);
       const represented = new Set(verified.opportunities.map(item => item.category));
       const supplements = fallback.opportunities.filter(item => !represented.has(item.category) && represented.add(item.category));
