@@ -18,23 +18,29 @@ jobs:
           - os: windows-latest
             command: npm run dist:win
             artifact: windows
-            files: release/*.exe
+            files: |
+              release/*.exe
+              release/latest.yml
           - os: windows-latest
             command: npm run dist:win:enterprise
             artifact: windows-enterprise
-            files: release-enterprise/*.exe
+            files: |
+              release-enterprise/*.exe
+              release-enterprise/latest.yml
           - os: ubuntu-latest
             command: npm run dist:linux
             artifact: linux
             files: |
               release/*.AppImage
               release/*.deb
+              release/latest-linux.yml
           - os: macos-latest
             command: npm run dist:mac
             artifact: macos
             files: |
               release/*.dmg
               release/*.zip
+              release/latest-mac.yml
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
