@@ -4,7 +4,8 @@ import { createEvidenceBasedFallback } from '../shared/fallback.js';
 import { buildPilotPlan } from '../shared/verification.js';
 import { createAdvisorActionOutcome, validateAdvisorAction } from '../shared/advisor-actions.js';
 import { researchErrorMessage } from '../shared/research-error.js';
-import { DIRECTOR_WINDOWS_DOWNLOAD, ENTERPRISE_WINDOWS_DOWNLOAD, RELEASE_VERSION } from '../shared/release.js';
+import { DIRECTOR_WINDOWS_DOWNLOAD, ENTERPRISE_WINDOWS_DOWNLOAD, DIRECTOR_RELEASE_VERSION, ENTERPRISE_RELEASE_VERSION } from '../shared/release.js';
+import { normalizeUserHypothesis } from '../shared/hypothesis.js';
 import ResultDashboard from './ResultDashboard.jsx';
 import './styles.css';
 import './audit.css';
@@ -12,6 +13,7 @@ import './workspace.css';
 
 const DESKTOP = typeof window !== 'undefined' && Boolean(window.director?.isDesktop);
 const ENTERPRISE = import.meta.env.MODE === 'enterprise';
+const RELEASE_VERSION = ENTERPRISE ? ENTERPRISE_RELEASE_VERSION : DIRECTOR_RELEASE_VERSION;
 const BASE = import.meta.env.BASE_URL;
 const WINDOWS_DOWNLOAD = ENTERPRISE ? ENTERPRISE_WINDOWS_DOWNLOAD : DIRECTOR_WINDOWS_DOWNLOAD;
 const ANDROID_DOWNLOAD = 'https://baiagent.ru/xray/api/download.php?platform=android';
@@ -39,12 +41,12 @@ function openLink(url) {
 }
 
 function Brand() {
-  return <div className="brand" aria-label={ENTERPRISE ? 'Balanov.PRO' : 'BAIagent и A2OS'}>
+  return <div className="brand" aria-label={ENTERPRISE ? 'Balanov.PRO' : 'BAIagent — ИИ-советник'}>
     <button className="brand-home" onClick={() => openLink(ENTERPRISE ? 'https://balanov.pro/' : 'https://baiagent.ru/')} aria-label={ENTERPRISE ? 'Открыть Balanov.PRO' : 'Открыть baiagent.ru'}>
       {ENTERPRISE ? <strong className="enterprise-brand-name">Balanov.PRO</strong> : <img src={`${BASE}images/baiagent-logo.png`} alt="Ai" />}
     </button>
     <span className="brand-divider" />
-    {ENTERPRISE ? <span className="brand-product">ИИ-советник</span> : <button className="brand-a2os" onClick={() => openLink('https://2aos.ru/')} aria-label="Открыть 2aos.ru">2AOS</button>}
+    <span className="brand-product">ИИ-советник</span>
   </div>;
 }
 
@@ -197,6 +199,21 @@ export default function App() {
     setSaved(false);
   }
 
+  async function createHypothesis(input) {
+    if (!result || !input?.brief?.trim()) throw new Error('Опишите идею для новой гипотезы');
+    setError('');
+    if (DESKTOP) {
+      const response = await window.director.createHypothesis(input);
+      if (response.status !== 'completed' || !response.result || !response.opportunityId) throw new Error('Приложение не подтвердило сохранение гипотезы');
+      setResult(response.result); setSelectedId(response.opportunityId); setSaved(false);
+      return response;
+    }
+    const opportunity = normalizeUserHypothesis({}, input);
+    setResult(current => ({ ...current, analysis: { ...current.analysis, opportunities: [...current.analysis.opportunities, opportunity] } }));
+    setSelectedId(opportunity.id); setSaved(false);
+    return { status: 'completed', opportunityId: opportunity.id, mode: 'user-brief-rules' };
+  }
+
   async function preparePilot() {
     if (!selected || !result) return createAdvisorActionOutcome('error', 'Сначала выберите направление для плана пилота.');
     setError('');
@@ -277,6 +294,16 @@ export default function App() {
       const next = opportunities.find(item => item.id === action.opportunityId);
       setSelectedId(next.id); setSaved(false);
       return createAdvisorActionOutcome('completed', `Выбрано направление «${next.processName || next.title}». План и пилот обновлены.`);
+    }
+    if (action.type === 'create_hypothesis') {
+      try {
+        const created = await createHypothesis({ brief: action.brief, constraints: action.constraints });
+        const title = created.result?.analysis.opportunities.find(item => item.id === created.opportunityId)?.title || 'новая гипотеза';
+        return createAdvisorActionOutcome('completed', `Гипотеза «${title}» добавлена в направления и выбрана. Это идея для проверки, а не подтверждённый факт.`);
+      } catch (reason) {
+        setError(reason.message);
+        return createAdvisorActionOutcome('error', `Не удалось создать гипотезу: ${reason.message}`);
+      }
     }
     if (action.type === 'add_documents') return addDocuments();
     if (action.type === 'exclude_documents') return forgetFolder();
@@ -377,7 +404,7 @@ export default function App() {
     {phase === 'result' && result && selected && <ResultDashboard
       result={result} selected={selected} onSelect={id => { setSelectedId(id); setSaved(false); }}
       onReset={reset} onStartNewAudit={startNewAudit} onOpen={openSource} onSave={preparePilot} saved={saved} desktop={DESKTOP}
-      onAddDocuments={addDocuments} onAddFolder={addFolder} onForgetFolder={forgetFolder} onAction={performAdvisorAction}
+      onAddDocuments={addDocuments} onAddFolder={addFolder} onForgetFolder={forgetFolder} onAction={performAdvisorAction} onCreateHypothesis={createHypothesis}
       adding={adding} folderBusy={folderBusy} error={error} onUseBrowser={useBrowserOnPhone}
     />}
 

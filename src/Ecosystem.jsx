@@ -54,8 +54,8 @@ export function FreeStart({ onOpen }) {
   return <section className="free-start">
     <div className="free-start-heading"><span className="section-kicker">Самостоятельный запуск</span><h2>Можно начать за 0 ₽</h2><p>Для тех, кто хочет попробовать самостоятельно. Без скрытого перехода на платный тариф.</p></div>
     <div className="free-options">
-      <article><div><strong>0 ₽</strong><span>Самостоятельный Director</span></div><p>Исследование, локальный диалог и выбранные документы. Поддержка не требуется.</p></article>
-      <article><div><strong>от 3 990 ₽/мес</strong><span>Поддержка Director</span></div><p>Только по желанию: помощь с установкой, настройкой и использованием.</p></article>
+      <article><div><strong>0 ₽</strong><span>Самостоятельный советник</span></div><p>Исследование, локальный диалог и выбранные документы. Поддержка не требуется.</p></article>
+      <article><div><strong>от 3 990 ₽/мес</strong><span>Поддержка советника</span></div><p>Только по желанию: помощь с установкой, настройкой и использованием.</p></article>
     </div>
     <button onClick={() => onOpen('https://baiagent.ru/free/')}><ShieldCheck size={18} /> Попробовать за 0 ₽<ArrowUpRight size={18} /></button>
   </section>;

@@ -11,7 +11,8 @@ async function analyzeFor(event, research) {
     userDataPath: app.getPath('userData'),
     onProgress: progress => event.sender.send('director:progress', progress),
   });
-  const result = { research, analysis };
+  const customOpportunities = (sessions.get(event.sender.id)?.analysis.opportunities || []).filter(item => item.origin === 'user');
+  const result = { research, analysis: { ...analysis, opportunities: [...analysis.opportunities, ...customOpportunities.filter(custom => !analysis.opportunities.some(item => item.id === custom.id))] } };
   sessions.set(event.sender.id, result);
   return result;
 }
@@ -21,7 +22,7 @@ function createWindow() {
   const enterprise = app.isPackaged && fsSync.existsSync(enterpriseIndex);
   const window = new BrowserWindow({
     width: 1240, height: 840, minWidth: 920, minHeight: 640,
-    backgroundColor: '#f4f8ff', title: enterprise ? 'Balanov.PRO Enterprise' : 'BAIagent Director',
+    backgroundColor: '#f4f8ff', title: enterprise ? 'Balanov.PRO Enterprise' : 'BAIagent — ИИ-советник для бизнеса',
     autoHideMenuBar: true,
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
@@ -109,6 +110,18 @@ app.whenReady().then(() => {
     const opportunity = current.analysis.opportunities.find(item => item.id === payload.opportunityId) || current.analysis.opportunities[0];
     const { chatWithQwen } = await import('./qwen.mjs');
     return chatWithQwen({ question, history, research: current.research, analysis: current.analysis, opportunity, userDataPath: app.getPath('userData') });
+  });
+  ipcMain.handle('director:create-hypothesis', async (event, payload = {}) => {
+    const current = sessions.get(event.sender.id);
+    if (!current) throw new Error('Сначала запустите исследование сайта');
+    const input = { brief: String(payload.brief || '').trim().slice(0, 1600), constraints: String(payload.constraints || '').trim().slice(0, 2000) };
+    if (!input.brief) throw new Error('Опишите идею или поручение для новой гипотезы');
+    const history = (Array.isArray(payload.history) ? payload.history : []).slice(-8).map(message => ({ role: message.role === 'user' ? 'user' : 'advisor', text: String(message.text || message.answer || '').slice(0, 1200) }));
+    const { createHypothesisWithQwen } = await import('./qwen.mjs');
+    const created = await createHypothesisWithQwen({ input, history, research: current.research, analysis: current.analysis, userDataPath: app.getPath('userData') });
+    const result = { ...current, analysis: { ...current.analysis, opportunities: [...current.analysis.opportunities, created.opportunity] } };
+    sessions.set(event.sender.id, result);
+    return { status: 'completed', result, opportunityId: created.opportunity.id, mode: created.mode };
   });
   ipcMain.handle('director:reset-session', event => {
     sessions.delete(event.sender.id);

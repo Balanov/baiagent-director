@@ -46,6 +46,14 @@ describe('advisor action schema', () => {
   it('rejects an opportunity outside the current result', () => {
     expect(validateAdvisorAction({ type: 'select_opportunity', opportunityId: 'missing' }, context).error.code).toBe('unknown_opportunity');
   });
+
+  it('accepts only bounded text for a user hypothesis, never paths or commands', () => {
+    const action = { type: 'create_hypothesis', brief: 'Проверить наборы для офиса', constraints: 'Без новых наймов' };
+    expect(validateAdvisorAction(action, context)).toEqual({ ok: true, action });
+    expect(validateAdvisorAction({ ...action, path: 'C:\\Windows\\System32' }, context).error.code).toBe('invalid_fields');
+    expect(validateAdvisorAction({ ...action, brief: '' }, context).error.code).toBe('invalid_hypothesis');
+    expect(validateAdvisorAction(action, { ...context, desktop: false }).error.code).toBe('unsupported');
+  });
 });
 
 describe('explicit advisor command router', () => {
@@ -85,6 +93,15 @@ describe('explicit advisor command router', () => {
     const routed = routeAdvisorCommand('исключи документы', { ...context, hasDocuments: false });
     expect(routed.ok).toBe(false);
     expect(routed.error.code).toBe('unsupported');
+  });
+
+  it('turns an explicit hypothesis request into a real bounded action', () => {
+    expect(routeAdvisorCommand('Создай новую гипотезу: наборы для завтрака в офис. Рамки: без новых наймов', context)).toEqual({
+      ok: true,
+      action: { type: 'create_hypothesis', brief: 'наборы для завтрака в офис', constraints: 'без новых наймов' },
+    });
+    expect(routeAdvisorCommand('Можно ли создать новую гипотезу?', context)).toBeNull();
+    expect(routeAdvisorCommand('Как сформулировать гипотезу', context)).toBeNull();
   });
 });
 

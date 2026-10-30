@@ -4,7 +4,9 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 
 const root = path.resolve(__dirname, '..');
-const output = process.env.BAIAGENT_WINDOWS_OUTPUT || 'release-111-node';
+const version = require('../package.json').version;
+const versionSlug = version.replace(/\./g, '');
+const output = process.env.BAIAGENT_WINDOWS_OUTPUT || 'release-signed';
 const enterprise = process.env.BAIAGENT_SMOKE_PRODUCT === 'enterprise';
 const product = enterprise ? 'enterprise' : 'director';
 const executableName = enterprise ? 'Balanov.PRO Enterprise.exe' : 'BAIagent Director.exe';
@@ -12,7 +14,7 @@ const profile = path.join(root, 'artifacts', `packaged-profile-${output.replace(
 const executable = process.env.BAIAGENT_EXECUTABLE
   ? path.resolve(process.env.BAIAGENT_EXECUTABLE)
   : path.join(root, output, 'win-unpacked', executableName);
-const evidence = path.join(root, 'validation', 'packaged-111', product);
+const evidence = path.join(root, 'validation', `packaged-${versionSlug}`, product);
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function waitForTarget() {
@@ -118,33 +120,67 @@ async function main() {
     assert.equal(contract.overflow, false);
     checks.push('audit-and-images');
 
-    let chat;
-    if (process.env.BAIAGENT_SMOKE_SKIP_CHAT !== '1') {
-      await evaluate(`(() => { const input = document.querySelector('.advisor-input input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Что говорят клиенты? Ответь одним коротким предложением со ссылкой на источник. Если отзывы не найдены, прямо скажи.'); input.dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('.advisor-input').requestSubmit(); })()`);
-      const chatDeadline = Date.now() + 300000;
-      while (Date.now() < chatDeadline) {
-        chat = await evaluate(`({busy:Boolean(document.querySelector('.advisor-thinking')),text:document.querySelector('.advisor-message.is-advisor:last-of-type')?.textContent||'',citations:document.querySelectorAll('.message-citations button').length})`);
-        if (!chat.busy && chat.text) break;
+    const dialogues = {};
+    const waitDialogue = async before => {
+      await delay(250);
+      const deadline = Date.now() + 300000;
+      let state;
+      while (Date.now() < deadline) {
+        state = await evaluate(`({
+          busy:Boolean(document.querySelector('.advisor-thinking')),
+          count:document.querySelectorAll('.advisor-message').length,
+          text:document.querySelector('.advisor-message.is-advisor:last-of-type')?.textContent||'',
+          citations:document.querySelectorAll('.advisor-message.is-advisor:last-of-type .message-citations button').length,
+          journal:[...document.querySelectorAll('.advisor-message.is-advisor')].map(node=>node.textContent).filter(text=>text.includes('Журнал действий')).at(-1)||''
+        })`);
+        if (!state.busy && state.count >= before + 2 && state.text) return state;
         await delay(1000);
       }
-      console.log('LOCAL_CHAT', JSON.stringify(chat));
-      await fs.writeFile(path.join(evidence, 'last-chat.json'), JSON.stringify(chat, null, 2));
-      await screenshot('local-chat');
-      assert.ok(chat.text && !chat.busy && !/Не смог завершить/.test(chat.text), `Диалог: ${JSON.stringify(chat)}`);
-      assert.ok(chat.citations > 0, 'Локальный советник не вернул проверяемых источников');
-      checks.push('real-local-chat-with-citations');
-      checkpoint('local-chat-complete');
+      throw new Error(`Диалог не завершился: ${JSON.stringify(state)}`);
+    };
+    const askLocal = async question => {
+      const before = await evaluate(`document.querySelectorAll('.advisor-message').length`);
+      await evaluate(`(() => { const input = document.querySelector('.advisor-input input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(question)}); input.dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('.advisor-input').requestSubmit(); })()`);
+      const response = await waitDialogue(before);
+      assert.ok(response.text && !/Не смог завершить/.test(response.text), `Диалог: ${JSON.stringify(response)}`);
+      console.log('LOCAL_CHAT', JSON.stringify({ question, ...response }));
+      return response;
+    };
+
+    const chat = await askLocal('Что говорят клиенты? Ответь одним коротким предложением со ссылкой на источник. Если отзывы не найдены, прямо скажи.');
+    assert.ok(chat.citations > 0, 'Локальный советник не вернул проверяемых источников');
+    dialogues.factual = chat;
+    checks.push('real-local-chat-with-citations');
+    checkpoint('local-chat-complete');
+    await screenshot('local-chat');
+
+    dialogues.greeting = await askLocal('Эй');
+    assert.match(dialogues.greeting.text, /Здравствуйте! Я ваш ИИ-советник/);
+    checks.push('greeting-is-dialogue-not-factual-error');
+
+    dialogues.recommendation = await askLocal('И что с этим делать?');
+    assert.match(dialogues.recommendation.text, /начн|рекоменд|предла|шаг|выбер/i);
+    checks.push('contextual-next-step-recommendation');
+
+    if (!enterprise) {
+      await clickText('.advisor-next', 'Перейти к гипотезам');
+      dialogues.createdHypothesis = await askLocal('Добавь гипотезу: проверить наборы для завтрака в офисе');
+      const created = await evaluate(`({
+        selected:document.querySelector('.direction-card.is-selected')?.textContent||'',
+        journal:[...document.querySelectorAll('.advisor-message.is-advisor')].map(node=>node.textContent).filter(text=>text.includes('Журнал действий')).at(-1)||''
+      })`);
+      assert.match(created.selected, /завтрак/i, JSON.stringify(created));
+      assert.match(created.journal, /Выполнено:.*Гипотеза/);
+      checks.push('chat-created-and-selected-real-hypothesis');
+      await screenshot('created-hypothesis');
     } else {
-      checks.push('chat-covered-by-live-director-run');
+      await clickText('.advisor-next', 'Перейти к гипотезам');
+      await evaluate(`(() => {
+        const card = [...document.querySelectorAll('.direction-card')].find(item => /отзыв|репутац|клиент/i.test(item.textContent));
+        if (!card) throw new Error('Релевантная гипотеза не найдена');
+        card.click();
+      })()`);
     }
-    await clickText('.advisor-step-actions button', 'Перейти к гипотезам');
-    await clickText('.rail-navigation button', 'Выбор');
-    await evaluate(`(() => {
-      const cards = [...document.querySelectorAll('.direction-card')];
-      const card = ${enterprise ? "cards.find(item => /отзыв|репутац|клиент/i.test(item.textContent))" : 'cards[1]'};
-      if (!card) throw new Error('Релевантная гипотеза не найдена');
-      card.click();
-    })()`);
     await clickText('.rail-navigation button', 'План');
     assert.ok(await evaluate(`document.querySelectorAll('.plan-step-list > *').length > 0`), 'Не построен план для выбранной гипотезы');
     await clickText('.rail-navigation button', 'Пилот');
@@ -152,8 +188,9 @@ async function main() {
     checks.push('direction-plan-pilot');
     await screenshot('pilot');
     let enterpriseContract;
+    let selfService;
     if (enterprise) {
-      await clickText('.advisor-step-actions button', 'Подключить 0 руб.');
+      await clickText('.advisor-next', 'Подключить 0 руб.');
       await delay(300);
       enterpriseContract = await evaluate(`({
         brand: document.querySelector('.enterprise-panel__brand')?.textContent || '',
@@ -167,8 +204,28 @@ async function main() {
       assert.ok(enterpriseContract.architecture.length > 30, 'Отсутствует архитектура enterprise-внедрения');
       checks.push('enterprise-vendor-prices-and-architecture');
       await screenshot('enterprise');
+    } else {
+      await clickText('.advisor-next', 'Подключить 0 руб.');
+      await clickText('.onboarding-support summary', 'Хотите сначала всё сделать сами?');
+      selfService = await evaluate(`({
+        open:document.querySelector('.onboarding-support')?.open||false,
+        phases:document.querySelectorAll('.self-service-plan > li').length,
+        text:document.querySelector('.onboarding-support')?.textContent||'',
+        selfLinks:document.querySelectorAll('.onboarding-support a[href*="xray"]').length
+      })`);
+      assert.ok(selfService.open && selfService.phases >= 4, JSON.stringify(selfService));
+      assert.match(selfService.text, /Внутренний бюджет/);
+      assert.equal(selfService.selfLinks, 0, 'Самостоятельный план ссылается на текущий советник');
+      checks.push('self-service-plan-inside-current-advisor');
+      await screenshot('self-service-plan');
+      const before = await evaluate(`document.querySelectorAll('.advisor-message').length`);
+      await clickText('.onboarding-support .onboarding-primary', 'Обсудить план с советником');
+      dialogues.selfService = await waitDialogue(before);
+      assert.match(dialogues.selfService.text, /Бюджет/);
+      assert.match(dialogues.selfService.text, /Остановить/);
+      checks.push('self-service-consultation-real-local-model');
     }
-    const report = { status: 'passed', checkedAt: new Date().toISOString(), version: '1.1.1', product, executable, output, mode, chat, contract, enterpriseContract, checks, activity: [...activity], screenshots, limitation: 'Проверен путь локальной модели через Ollama. Встроенная GGUF-модель и подпись установщика проверяются отдельно.' };
+    const report = { status: 'passed', checkedAt: new Date().toISOString(), version, product, executable, output, mode, chat, dialogues, selfService, contract, enterpriseContract, checks, activity: [...activity], screenshots, limitation: 'Проверен путь локальной модели через Ollama. Встроенная GGUF-модель и подпись установщика проверяются отдельно.' };
     await fs.writeFile(path.join(evidence, 'verification.json'), JSON.stringify(report, null, 2));
     console.log('PACKAGED_SMOKE_PASSED', JSON.stringify({ mode, checks }));
   } finally {

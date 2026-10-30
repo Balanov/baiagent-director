@@ -54,7 +54,7 @@ function WorkspaceRail({ current, onChange, desktop }) {
       ><Icon size={20} strokeWidth={1.8} /><span>{label}</span></button>)}
     </div>
     <div className={`rail-trust ${desktop ? 'is-local' : 'is-web'}`}>
-      {desktop ? <><ShieldCheck size={20} strokeWidth={1.8} /><strong>100% безопасно</strong><span>На вашем ПК</span></> : <><Globe2 size={20} strokeWidth={1.8} /><strong>Веб-аудит</strong><span>Без локальной обработки</span></>}
+      {desktop ? <><ShieldCheck size={20} strokeWidth={1.8} /><strong>Локальная обработка</strong><span>Диалог и документы · на вашем ПК</span></> : <><Globe2 size={20} strokeWidth={1.8} /><strong>Веб-аудит</strong><span>Без локальной обработки</span></>}
     </div>
   </nav>;
 }
@@ -131,9 +131,15 @@ function NewAuditDialog({ onClose, onSubmit, desktop, hasLocalDocuments }) {
 
 export default function ResultDashboard({
   result, selected, onSelect, onOpen, onSave, saved, desktop, onStartNewAudit,
-  onAddDocuments, onAddFolder, onForgetFolder, onAction, adding, folderBusy, error,
+  onAddDocuments, onAddFolder, onForgetFolder, onAction, onCreateHypothesis, adding, folderBusy, error,
 }) {
   const [drawer, setDrawer] = useState(null);
+  const [hypothesisOpen, setHypothesisOpen] = useState(false);
+  const [hypothesisBrief, setHypothesisBrief] = useState('');
+  const [hypothesisConstraints, setHypothesisConstraints] = useState('');
+  const [hypothesisBusy, setHypothesisBusy] = useState(false);
+  const [hypothesisNotice, setHypothesisNotice] = useState('');
+  const [advisorRequest, setAdvisorRequest] = useState(null);
   const [sourceScope, setSourceScope] = useState('own');
   const [workspaceStep, setWorkspaceStep] = useState('audit');
   const [documentsReturnStep, setDocumentsReturnStep] = useState('audit');
@@ -173,8 +179,12 @@ export default function ResultDashboard({
     setWorkspaceStep(step);
   }
 
-  function handleAdvisorAction(action) {
-    if (action.type !== 'navigate_step') return onAction(action);
+  async function handleAdvisorAction(action) {
+    if (action.type !== 'navigate_step') {
+      const outcome = await onAction(action);
+      if (action.type === 'create_hypothesis' && outcome?.status === 'completed') goToStep('direction');
+      return outcome;
+    }
     goToStep(action.step);
     const label = WORKSPACE_STEPS.find(item => item.id === action.step)?.label || 'Исследование';
     return { status: 'completed', success: true, message: `Открыт раздел «${label}».` };
@@ -182,6 +192,26 @@ export default function ResultDashboard({
 
   function openOffering(item) { setActiveOffering(item); setDrawer('offering'); }
   function openOfferings() { setActiveOffering(null); setDrawer('offerings'); }
+
+  async function addHypothesis(generated = false) {
+    const brief = generated
+      ? 'Предложи новую проверяемую гипотезу на основе исследования и рамки ниже. Не повторяй уже существующие направления.'
+      : hypothesisBrief.trim();
+    if (!brief || hypothesisBusy) return;
+    setHypothesisBusy(true); setHypothesisNotice('');
+    try {
+      const response = await onCreateHypothesis({ brief, constraints: hypothesisConstraints.trim() });
+      setHypothesisBrief(''); setHypothesisOpen(false);
+      setHypothesisNotice(`Гипотеза сохранена и выбрана: «${response.result?.analysis.opportunities.find(item => item.id === response.opportunityId)?.title || 'новое направление'}». Можно переходить к плану.`);
+      setAdvisorRequest({ id: Date.now(), text: 'Объясни, как проверить новую выбранную гипотезу и какие данные нужны первыми.' });
+    } catch (reason) { setHypothesisNotice(reason.message || 'Не удалось сохранить гипотезу.'); }
+    finally { setHypothesisBusy(false); }
+  }
+
+  function discussSelfService() {
+    setDrawer(null); goToStep('plan');
+    setAdvisorRequest({ id: Date.now(), text: `Разбери самостоятельный план внедрения для «${selected.processName || selected.title}»: этапы, ориентировочные сроки, бюджет, владельцы и риски.` });
+  }
 
   const drawerTitles = {
     company: 'Профиль компании и управленческое резюме',
@@ -242,7 +272,17 @@ export default function ResultDashboard({
               <span className="direction-copy"><span className="workspace-kicker">{CATEGORY_LABELS[item.category] || 'Возможность'}{item.priority?.label ? ` · ${item.priority.label}` : ''}</span><strong>{item.processName || item.title}</strong><span>{item.processAction || item.action}</span><small><Gauge size={15} />{item.businessMetric || item.metric}</small></span>
               <span className="direction-check">{item.id === selected.id ? <CheckCircle2 size={22} /> : <ChevronRight size={20} />}</span>
             </button>)}</div>
-            <div className="workspace-summary enter-item"><TrendingUp size={20} /><div><span className="workspace-kicker">Выбрано для плана</span><strong>{selected.processName || selected.title}</strong><p>{selected.why}</p></div></div>
+            <div className="hypothesis-actions enter-item"><button className="soft-action" onClick={() => { setHypothesisOpen(value => !value); setHypothesisNotice(''); }} disabled={hypothesisBusy}><Plus size={16} />Своя гипотеза</button><button className="soft-action" onClick={() => addHypothesis(true)} disabled={hypothesisBusy}><Sparkles size={16} />{hypothesisBusy ? 'Формирую…' : 'Предложить ещё'}</button></div>
+            {hypothesisOpen && <form className="hypothesis-composer enter-item" onSubmit={event => { event.preventDefault(); addHypothesis(false); }}>
+              <label htmlFor="own-hypothesis">Что хотите проверить?</label>
+              <textarea id="own-hypothesis" value={hypothesisBrief} onChange={event => setHypothesisBrief(event.target.value)} maxLength={1600} placeholder="Например: предложить готовые наборы для корпоративных заказов" disabled={hypothesisBusy} required />
+              <label htmlFor="hypothesis-constraints">Ваши рамки <span>необязательно</span></label>
+              <textarea id="hypothesis-constraints" value={hypothesisConstraints} onChange={event => setHypothesisConstraints(event.target.value)} maxLength={2000} placeholder="Бюджет, сроки, ресурсы, юридические или технические ограничения" disabled={hypothesisBusy} />
+              <p>Советник оформит это как проверяемую идею, а не как подтверждённый факт. Новое направление сохранится в текущем исследовании.</p>
+              <button className="primary-action" type="submit" disabled={!hypothesisBrief.trim() || hypothesisBusy}>{hypothesisBusy ? 'Оформляю гипотезу…' : 'Добавить в направления'}<ArrowRight size={16} /></button>
+            </form>}
+            {hypothesisNotice && <p className="hypothesis-notice" role="status">{hypothesisNotice}</p>}
+            <div className="workspace-summary enter-item"><TrendingUp size={20} /><div><span className="workspace-kicker">{selected.origin === 'user' ? 'Ваша гипотеза · требует проверки' : 'Выбрано для плана'}</span><strong>{selected.processName || selected.title}</strong><p>{selected.why}</p></div></div>
           </>}
 
           {workspaceStep === 'plan' && <>
@@ -288,6 +328,7 @@ export default function ResultDashboard({
         context={advisorContext}
         actions={advisorActions}
         onAction={handleAdvisorAction}
+        requestedQuestion={advisorRequest}
       />
     </div>
 
@@ -326,7 +367,7 @@ export default function ResultDashboard({
 
           {drawer === 'documents' && <section className="drawer-plan"><span className="drawer-tag">{desktop ? 'Локально и только с вашего разрешения' : 'Полная работа с документами — в Windows'}</span><h3>Внутренние данные превращают обзор в экономический разбор</h3><p>Добавьте каталог, прайс, обращения, регламенты и отчёты. Советник свяжет рынок с маржой, реальным процессом и измеримым эффектом.</p>{desktop ? <><button className="documents-action folder-action" onClick={onAddFolder} disabled={folderBusy || adding}><FolderOpen size={18} />{folderBusy ? 'Проверяю папку…' : 'Выбрать рабочую папку'}<ChevronRight size={17} /></button><button className="documents-action" onClick={onAddDocuments} disabled={adding || folderBusy}><FilePlus2 size={18} />{adding ? 'Изучаю документы…' : 'Выбрать отдельные документы'}<ChevronRight size={17} /></button></> : <a className="documents-action" href={WINDOWS_DOWNLOAD} download><Monitor size={18} />Скачать полную версию для Windows<Download size={17} /></a>}<div className="folder-safety"><ShieldCheck size={15} /> {desktop ? 'Только выбранные материалы. Документы обрабатываются локально и не отправляются в облачную модель. Для свежего внешнего рынка нужен интернет.' : 'Браузерная версия не заявляет локальную обработку. Документы на устройстве доступны только в Windows-версии.'}</div></section>}
 
-          {drawer === 'connect' && <Onboarding companyName={companyName} website={research.requestedUrl} opportunity={selected} solution={primarySolution} onOpen={onOpen} />}
+          {drawer === 'connect' && <Onboarding companyName={companyName} website={research.requestedUrl} opportunity={selected} solution={primarySolution} onOpen={onOpen} onDiscussSelfService={ENTERPRISE ? undefined : discussSelfService} />}
           {drawer === 'enterprise' && <EnterprisePanel research={normalizedResearch} profile={profile} opportunity={selected} solution={primarySolution} companyName={companyName} website={research.requestedUrl} onOpen={onOpen} />}
           {drawer === 'agents' && <AgentShowcase opportunity={selected} companyName={companyName} website={research.requestedUrl} onOpen={onOpen} />}
         </div>

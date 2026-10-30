@@ -1,9 +1,11 @@
 import { ArrowUpRight, Check, ChevronRight, ShieldCheck, Sparkles } from 'lucide-react';
 import { applicationUrl } from './Ecosystem.jsx';
 import { formatRubles } from '../shared/solutions.js';
+import { buildSelfServicePlan } from '../shared/self-service.js';
 
-export default function Onboarding({ companyName, website, opportunity, solution, onOpen }) {
+export default function Onboarding({ companyName, website, opportunity, solution, onOpen, onDiscussSelfService }) {
   const implementationUrl = applicationUrl(solution?.fullName || 'Индивидуальное внедрение', companyName, opportunity.processName || opportunity.title, website);
+  const selfService = buildSelfServicePlan(opportunity, solution);
   return <section className="native-onboarding">
     <div className="onboarding-hero">
       <span className="section-kicker"><Sparkles size={13} /> {solution ? 'Автономный агент · внедрение под ключ' : 'Индивидуальная проработка процесса'}</span>
@@ -14,11 +16,18 @@ export default function Onboarding({ companyName, website, opportunity, solution
     </div>
 
     <div className="onboarding-path">
-      <article className="is-done"><span><Check size={16} /></span><div><small>Уже готово в ИИ-советнике</small><strong>Гипотеза связана с доказательствами</strong><p>Задача: «{opportunity.processName || opportunity.title}». Результат проверяем на ваших данных, а не обещаем эффект заранее.</p></div></article>
+      <article className="is-done"><span><Check size={16} /></span><div><small>Уже готово в ИИ-советнике</small><strong>Гипотеза оформлена для проверки</strong><p>Задача: «{opportunity.processName || opportunity.title}». Результат проверяем на ваших данных, а не обещаем эффект заранее.</p></div></article>
       <article><span>2</span><div><small>Следующий шаг · заявка и первичный аудит 0 ₽</small><strong>Подключить решение с проверкой процесса</strong><p>Бесплатно оставите заявку и согласуете первичный аудит. Последующее внедрение и абонентская плата — по прайсу и согласованному объёму работ.</p><button className="onboarding-primary" onClick={() => onOpen(implementationUrl)}>Подключить 0 руб.<ArrowUpRight size={16} /></button></div></article>
     </div>
 
     <div className="onboarding-safety"><ShieldCheck size={16} /><span>0 ₽ — заявка и первичный аудит, не последующее внедрение. Откроется заполненная заявка — ничего не отправится автоматически.</span></div>
-    <details className="onboarding-support"><summary><span>Хотите сначала всё сделать сами?</span><small>Советник · 0 ₽</small><ChevronRight size={16} /></summary><div><p>Бесплатный советник остаётся отдельным продуктом: исследование, локальный диалог и ваши документы. На странице Free также доступна необязательная поддержка установки и использования от 3 990 ₽/мес.</p><button onClick={() => onOpen('https://baiagent.ru/free/')}>Открыть бесплатного советника<ArrowUpRight size={16} /></button></div></details>
+    <details className="onboarding-support"><summary><span>Хотите сначала всё сделать сами?</span><small>План внутри советника · 0 ₽</small><ChevronRight size={16} /></summary><div>
+      {onDiscussSelfService ? <>
+        <p>{selfService.estimateNotice}</p>
+        <ol className="self-service-plan">{selfService.phases.map((phase, index) => <li key={`${phase.title}-${index}`}><span>{index + 1}</span><div><strong>{phase.title}</strong><p>{phase.action}</p><small>Ориентир: {phase.duration} · {phase.owner}</small><small>{phase.cost}</small></div></li>)}</ol>
+        <div className="self-service-budget"><strong>Как считать бюджет</strong><p>{selfService.budget}</p><p><strong>Данные:</strong> {selfService.data}</p><p><strong>Стоп:</strong> {selfService.stopRule}</p></div>
+        <button className="onboarding-primary" onClick={onDiscussSelfService}>Обсудить план с советником<ArrowUpRight size={16} /></button>
+      </> : <><p>Бесплатный советник остаётся отдельным продуктом: исследование, локальный диалог и ваши документы. На странице Free также доступна необязательная поддержка установки и использования от 3 990 ₽/мес.</p><button onClick={() => onOpen('https://baiagent.ru/free/')}>Открыть бесплатного советника<ArrowUpRight size={16} /></button></>}
+    </div></details>
   </section>;
 }

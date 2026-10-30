@@ -454,6 +454,16 @@
 .pilot-card-list h2 { margin: 6px 0 8px; color: var(--workspace-ink); font-size: 17px; line-height: 1.4; }
 .pilot-card-list p { margin: 5px 0 0; color: var(--workspace-muted); font-size: 13px; line-height: 1.5; }
 
+.hypothesis-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.hypothesis-composer { display: grid; gap: 10px; margin-top: 14px; padding: 18px; border: 1px solid #dce7ef; border-radius: 14px; background: #f7f9f7; }
+.hypothesis-composer label { color: var(--workspace-ink); font-size: 13px; font-weight: 680; }
+.hypothesis-composer label span { color: var(--workspace-muted); font-weight: 450; }
+.hypothesis-composer textarea { width: 100%; min-height: 82px; resize: vertical; padding: 12px 14px; border: 1px solid #d8e1dc; border-radius: 12px; color: var(--workspace-ink); background: #fff; font: inherit; font-size: 14px; line-height: 1.5; }
+.hypothesis-composer textarea:focus { outline: 2px solid #bcdcf7; border-color: var(--workspace-blue); }
+.hypothesis-composer > p { margin: 0; color: var(--workspace-muted); font-size: 12px; line-height: 1.5; }
+.hypothesis-composer .primary-action { justify-self: start; }
+.hypothesis-notice { margin: 14px 0 0; padding: 12px 14px; border-radius: 12px; color: #42624f; background: #f0f7f1; font-size: 13px; line-height: 1.5; }
+
 /* Real document actions and registry */
 .document-actions { display: grid; gap: 10px; margin-bottom: 24px; }
 .document-actions > button,

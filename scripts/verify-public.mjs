@@ -3,36 +3,32 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+const directorManifest = JSON.parse(await fs.readFile(new URL('../public/downloads/current.json', import.meta.url), 'utf8'));
+const enterpriseManifest = JSON.parse(await fs.readFile(new URL('../public/downloads/enterprise.json', import.meta.url), 'utf8'));
 const products = [
   {
+    ...directorManifest,
     id: 'director',
     base: 'https://baiagent.ru',
     path: '/xray',
     title: 'BAIagent — ИИ-советник для бизнеса',
-    version: '1.1.1',
-    file: 'BAIagent-Director-Setup-Windows-1.1.1-x64.exe',
-    sizeBytes: 442049543,
-    sha256: '63fd4446623885a75e9eca9bb31f4c0949fce66812ed1da56c98f51f3631468b',
     manifest: 'current.json',
     apiPlatform: 'windows',
   },
   {
+    ...enterpriseManifest,
     id: 'enterprise',
     base: 'https://balanov.pro',
     path: '/ai-audit',
     title: 'Balanov.PRO — ИИ-советник для бизнеса',
-    version: '1.1.1',
-    file: 'Balanov-PRO-Enterprise-Setup-Windows-1.1.1-x64.exe',
-    sizeBytes: 442049313,
-    sha256: 'e8f24f5723c5b153b7064338e072d68eeaab2b76d246eda02bffdcd2916e3d86',
     manifest: 'enterprise.json',
     apiPlatform: 'enterprise',
   },
 ];
 
-const output = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../artifacts/public-111');
+const output = path.resolve(path.dirname(fileURLToPath(import.meta.url)), `../artifacts/public-${products[0].version.replace(/\./g, '')}`);
 await fs.mkdir(output, { recursive: true });
-const report = { version: '1.1.1', checkedAt: new Date().toISOString(), products: {} };
+const report = { version: products[0].version, checkedAt: new Date().toISOString(), products: {} };
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 
 async function fetchChecked(url, options = {}) {
@@ -42,7 +38,7 @@ async function fetchChecked(url, options = {}) {
 }
 
 async function verifyPage(product) {
-  const url = `${product.base}${product.path}/?release=1.1.1`;
+  const url = `${product.base}${product.path}/?release=${product.version}`;
   const html = await fetchChecked(url).then(response => response.text());
   assert(html.includes('<div id="root"></div>'), `${product.id}: missing app root`);
   assert(html.includes(product.title), `${product.id}: wrong product title`);
@@ -54,10 +50,10 @@ async function verifyPage(product) {
     if (asset.endsWith('.js')) {
       const expectedName = product.id === 'enterprise' ? 'Balanov-PRO-Enterprise-Setup-Windows-' : 'BAIagent-Director-Setup-Windows-';
       assert(content.includes(expectedName), `${product.id}: wrong installer product in JS`);
-      assert(content.includes('1.1.1'), `${product.id}: stale JS release`);
+      assert(content.includes(product.version), `${product.id}: stale JS release`);
     }
   }
-  const manifestUrl = `${product.base}${product.path}/downloads/${product.manifest}?release=1.1.1`;
+  const manifestUrl = `${product.base}${product.path}/downloads/${product.manifest}?release=${product.version}`;
   const manifest = await fetchChecked(manifestUrl).then(response => response.json());
   for (const field of ['version', 'file', 'sizeBytes', 'sha256']) {
     assert(manifest[field] === product[field], `${product.id}: manifest ${field} mismatch`);
@@ -66,7 +62,7 @@ async function verifyPage(product) {
 }
 
 async function downloadAndHash(product) {
-  const url = `${product.base}${product.path}/downloads/${product.file}?release=1.1.1`;
+  const url = `${product.base}${product.path}/downloads/${product.file}?release=${product.version}`;
   const response = await fetchChecked(url, { signal: AbortSignal.timeout(240000) });
   assert(Number(response.headers.get('content-length')) === product.sizeBytes, `${product.id}: HTTP size mismatch`);
   const filePath = path.join(output, product.file);
@@ -139,13 +135,13 @@ try {
     report.products[product.id].download = await downloadAndHash(product);
     if (process.argv.includes('--research')) report.products[product.id].research = await verifyResearch(product);
   }
-  const free = await fetchChecked('https://baiagent.ru/free/?release=1.1.1').then(response => response.text());
-  assert(free.includes(products[0].file), 'Free page has a stale Director download');
-  assert(free.includes('Версия 1.1.1'), 'Free page does not show version 1.1.1');
+  const free = await fetchChecked(`https://baiagent.ru/free/?release=${products[0].version}`).then(response => response.text());
+  assert(free.includes(products[0].file), 'Free page has a stale advisor download');
+  assert(free.includes(`Версия ${products[0].version}`), 'Free page does not show the advisor version');
   assert(!free.includes('0.8.1'), 'Free page still contains 0.8.1');
-  const host = await fetchChecked('https://balanov.pro/?release=1.1.1').then(response => response.text());
+  const host = await fetchChecked(`https://balanov.pro/?release=${products[0].version}`).then(response => response.text());
   assert((host.match(/href="\/ai-audit\/"/g) || []).length === 3, 'Balanov.PRO must have three audit links');
-  report.landingPages = { free: '1.1.1', balanovAuditLinks: 3 };
+  report.landingPages = { free: products[0].version, balanovAuditLinks: 3 };
   await fs.writeFile(reportFile, JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 } catch (error) {

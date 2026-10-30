@@ -207,7 +207,7 @@ export function buildPilotPlan(analysis, opportunity, sources) {
   if (!opportunity) throw new Error('No verified opportunity selected');
   const solution = getSolution(opportunity.solutionId) || recommendSolution(opportunity);
   const pilot = buildPilotBlueprint(opportunity, solution);
-  const sourceLines = opportunity.evidence.map(item => `- ${item.sourceTitle}: ${item.url}\n  «${item.quote}»`).join('\n');
+  const sourceLines = (opportunity.evidence || []).map(item => `- ${item.sourceTitle}: ${item.url}\n  «${item.quote}»`).join('\n') || (opportunity.origin === 'user' ? '- Гипотеза сформулирована пользователем; внешние доказательства ещё не собраны.' : '- Подтверждающие источники не найдены.');
   const steps = (opportunity.steps?.length ? opportunity.steps : ['Подтвердить владельца, текущий процесс и исходную метрику.', 'Собрать обезличенный эталонный набор и правила остановки.', 'Запустить ограниченный пилот с подтверждением человеком.', 'Сверить результат с эталоном и записать ошибки.']).map((item, index) => `${index + 1}. ${item}`).join('\n');
   const list = items => (items || []).map(item => `- ${item}`).join('\n');
   const audit = opportunity.processName ? `\n## Процесс: вход → действия → результат → эскалация\n**${opportunity.processName}**\n\n${(opportunity.workSteps || []).map(step => `### ${step.name}\n${step.description}`).join('\n\n')}\n\n### Владелец\n${opportunity.owner}\n\n### Необходимые данные\n${list(opportunity.requiredData)}\n\n### Возможные подключения после проверки доступа\n${list(opportunity.integrations)}\n\n### Более простая альтернатива ИИ\n${opportunity.simpleAlternative}\n\n### Риски и ограничения\n${list(opportunity.riskControls)}\n` : '';

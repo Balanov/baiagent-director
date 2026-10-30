@@ -1,7 +1,7 @@
 {
   "name": "baiagent-director",
-  "version": "1.1.1",
-  "description": "Local-first AI director that researches a company from public evidence and prepares verifiable pilot plans.",
+  "version": "1.2.0",
+  "description": "BAIagent — локальный ИИ-советник для бизнеса: аудит по проверяемым источникам, гипотезы и план пилота.",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
@@ -51,7 +51,7 @@
   },
   "build": {
     "appId": "pro.balanov.baiagent.director",
-    "productName": "BAIagent Director",
+    "productName": "BAIagent — ИИ-советник",
     "asarUnpack": [
       "node_modules/node-llama-cpp/**/*",
       "node_modules/@node-llama-cpp/**/*"
@@ -79,7 +79,7 @@
     "appx": {
       "applicationId": "BAIagentDirector",
       "publisherDisplayName": "Баланов Антон Николаевич",
-      "displayName": "BAIagent Director",
+      "displayName": "BAIagent — ИИ-советник",
       "backgroundColor": "#F4F8FF",
       "showNameOnTiles": true,
       "languages": [
@@ -119,7 +119,7 @@
       "runAfterFinish": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "BAIagent Director",
+      "shortcutName": "BAIagent — ИИ-советник",
       "menuCategory": "BAIagent",
       "installerIcon": "build/installerIcon.ico",
       "uninstallerIcon": "build/uninstallerIcon.ico",

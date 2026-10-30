@@ -1,6 +1,7 @@
 export const ADVISOR_ACTION_TYPES = Object.freeze([
   'navigate_step',
   'select_opportunity',
+  'create_hypothesis',
   'add_documents',
   'exclude_documents',
   'export_pilot',
@@ -12,6 +13,7 @@ export const ADVISOR_STEPS = Object.freeze(['audit', 'direction', 'plan', 'pilot
 const ACTION_FIELDS = {
   navigate_step: ['type', 'step'],
   select_opportunity: ['type', 'opportunityId'],
+  create_hypothesis: ['type', 'brief', 'constraints'],
   add_documents: ['type'],
   exclude_documents: ['type'],
   export_pilot: ['type'],
@@ -82,6 +84,14 @@ export function validateAdvisorAction(candidate, context = {}) {
     return { ok: true, action: { type: candidate.type, opportunityId: candidate.opportunityId } };
   }
 
+  if (candidate.type === 'create_hypothesis') {
+    const brief = typeof candidate.brief === 'string' ? candidate.brief.trim() : '';
+    const constraints = typeof candidate.constraints === 'string' ? candidate.constraints.trim() : '';
+    if (context.desktop !== true) return rejection('unsupported', 'Создание гипотез через диалог доступно в Windows-версии.');
+    if (brief.length < 3 || brief.length > 1600 || constraints.length > 2000) return rejection('invalid_hypothesis', 'Опишите идею до 1600 знаков; рамки — до 2000 знаков.');
+    return { ok: true, action: { type: candidate.type, brief, constraints } };
+  }
+
   if (candidate.type === 'add_documents' && context.desktop !== true) {
     return rejection('unsupported', 'Локальные документы доступны только в Windows-версии.');
   }
@@ -117,6 +127,13 @@ export function routeAdvisorCommand(input, context = {}) {
       const index = ORDINALS[match[1] || match[2]];
       const opportunityId = opportunityIds(context)[index];
       candidate = { type: 'select_opportunity', opportunityId };
+    }
+  }
+  if (!candidate) {
+    const match = String(input || '').trim().match(/^(?:создай|добавь|предложи|сгенерируй)(?:\s+мне)?(?:\s+(?:новую|свою|ещ[её]\s+одну))*\s+гипотез[а-яё]*\s*:?\s+([\s\S]+)$/iu);
+    if (match) {
+      const [brief, ...constraintParts] = match[1].split(/\s+(?:рамки|ограничения)\s*:\s*/iu);
+      candidate = { type: 'create_hypothesis', brief: brief.replace(/[.!]+$/u, '').trim(), constraints: constraintParts.join(': ').replace(/[.!]+$/u, '').trim() };
     }
   }
   return candidate ? validateAdvisorAction(candidate, context) : null;

@@ -38,7 +38,7 @@ function journalMessage(outcome) {
   return { role: 'advisor', kind: 'journal', status: outcome.status, text: outcome.message };
 }
 
-export default function AdvisorChat({ research, analysis, opportunity, onOpen, desktop = false, step = 'audit', context, actions, onAction }) {
+export default function AdvisorChat({ research, analysis, opportunity, onOpen, desktop = false, step = 'audit', context, actions, onAction, requestedQuestion }) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -57,6 +57,10 @@ export default function AdvisorChat({ research, analysis, opportunity, onOpen, d
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     scrollRef.current?.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' });
   }, [step]);
+  useEffect(() => {
+    if (!requestedQuestion?.id || locked) return;
+    if (desktop) askLocal(requestedQuestion.text); else askNavigator(requestedQuestion.text);
+  }, [requestedQuestion?.id]);
 
   async function executeAction(action) {
     setActionBusy(true);
@@ -135,7 +139,7 @@ export default function AdvisorChat({ research, analysis, opportunity, onOpen, d
   return <aside className={`advisor-chat ${desktop ? 'is-local' : 'is-web'}`} aria-label="Советник по исследованию">
     <header className="advisor-chat-header">
       <div className="advisor-avatar">{desktop ? <Sparkles size={22} strokeWidth={1.8} /> : <MessageCircle size={22} strokeWidth={1.8} />}</div>
-      <div className="advisor-identity"><span className="advisor-step-label">{STEP_LABELS[step] || 'Исследование'}</span><h2>Советник</h2><div className={`advisor-status ${desktop ? 'is-local' : 'is-web'}`}>{desktop ? <ShieldCheck size={15} /> : <Globe2 size={15} />}<span>{desktop ? <><strong>100% безопасно</strong><small>На вашем ПК</small></> : <><strong>Веб-навигатор</strong><small>Открытые источники · не локальная модель</small></>}</span></div></div>
+      <div className="advisor-identity"><span className="advisor-step-label">{STEP_LABELS[step] || 'Исследование'}</span><h2>Советник</h2><div className={`advisor-status ${desktop ? 'is-local' : 'is-web'}`}>{desktop ? <ShieldCheck size={15} /> : <Globe2 size={15} />}<span>{desktop ? <><strong>Локально на вашем ПК</strong><small>Диалог и выбранные документы</small></> : <><strong>Веб-навигатор</strong><small>Открытые источники · не локальная модель</small></>}</span></div></div>
     </header>
 
     <div className="advisor-boundary">{desktop ? <LockKeyhole size={16} /> : <ShieldCheck size={16} />}<p>{desktop ? 'Диалог и документы работают локально после загрузки модели. Для свежего рынка нужен интернет.' : 'Готовые запросы к собранным данным. Без имитации полноценного ИИ-чата в браузере.'}</p></div>

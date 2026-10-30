@@ -1,5 +1,8 @@
 import { createBusinessProfile } from './business.js';
 import { createMarketSearchPlan, isCompetitorCandidate, isRelevantIndustryEvidence } from './market-plan.js';
+import { advisorIntent, greetingAnswer } from './advisor-dialogue.js';
+import { selfServiceAnswer } from './self-service.js';
+import { getSolution, recommendSolution } from './solutions.js';
 
 export function offeringDisplayName(item = {}) {
   return String(item.displayName || item.name || 'Предложение').trim();
@@ -117,6 +120,18 @@ export function answerAdvisor(question, research = {}, analysis = {}, opportunit
   const query = String(question || '').trim();
   const lower = query.toLowerCase();
   if (!query) return { answer: 'Сформулируйте вопрос о компании, рынке, товарах, отзывах, конкурентах или плане действий.', citations: [] };
+  const intent = advisorIntent(query);
+  if (intent === 'smalltalk') return { answer: greetingAnswer(research, opportunity), citations: [] };
+  if (intent === 'hypothesis') return { answer: 'Чтобы идея не потерялась в разговоре, нажмите «Своя гипотеза» в разделе «Выбор». Опишите желаемый результат и рамки — я оформлю эксперимент, добавлю его в направления и подготовлю план. Для нового предложения на основе исследования нажмите «Предложить ещё».', citations: [] };
+  if (intent === 'implementation') {
+    const solution = getSolution(opportunity?.solutionId) || recommendSolution(opportunity || {});
+    return { answer: selfServiceAnswer(opportunity || {}, solution), citations: opportunity?.evidence || [] };
+  }
+  if (intent === 'recommendation') {
+    if (!opportunity) return { answer: `Начните с одного из направлений: ${(analysis.opportunities || []).map(item => item.title).join('; ') || 'сначала добавьте материалы компании'}. Откройте «Выбор» — я помогу превратить направление в измеримый план.`, citations: [] };
+    const firstSteps = (opportunity.steps || []).slice(0, 2).map((step, index) => `${index + 1}. ${step}`).join('\n');
+    return { answer: `Предлагаю не запускать всё сразу, а проверить направление «${opportunity.title}».\n${firstSteps || opportunity.action}\nМетрика: ${opportunity.metric}. Решение: ${opportunity.decision || 'продолжать только после сравнения с исходным результатом'}. Могу подробнее разобрать самостоятельное внедрение, сроки и бюджет.`, citations: opportunity.evidence || [] };
+  }
   if (/экосистем|baiagent|2aos|a2os|баланов|paritet|паритет|внедрен|поддержк/.test(lower)) return { answer: ECOSYSTEM_ANSWER, citations: [] };
   if (/план|пилот|внедр|с чего|перв.*шаг|действ/.test(lower) && opportunity) return {
     answer: `${opportunity.action} Критерий продолжения: ${opportunity.metric}. ${opportunity.decision || 'Решение принимаем после измерения исходного и пилотного результата.'}`,
