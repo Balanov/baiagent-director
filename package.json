@@ -10,6 +10,7 @@
   },
   "homepage": "https://baiagent.ru/",
   "license": "AGPL-3.0-or-later",
+  "desktopName": "baiagent-director.desktop",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
@@ -100,7 +101,7 @@
       ],
       "category": "Office",
       "maintainer": "Баланов Антон Николаевич",
-      "desktopName": "baiagent-director.desktop",
+      "syncDesktopName": true,
       "artifactName": "BAIagent-Director-Linux-${version}-${arch}.${ext}"
     },
     "mac": {
