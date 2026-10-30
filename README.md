@@ -33,11 +33,11 @@ Director — советник, а не автономный сотрудник: 
 
 [Скачать BAIagent Director 1.1.1 x64](https://baiagent.ru/xray/downloads/BAIagent-Director-Setup-Windows-1.1.1-x64.exe)
 
-**SHA-256:** `03dd2b9870a77e253825a4b8bf8df71c6432ce1829fe0b7d2cf0dd0a314b8544`
+**SHA-256:** `63fd4446623885a75e9eca9bb31f4c0949fce66812ed1da56c98f51f3631468b`
 
 [Скачать Balanov.PRO Enterprise 1.1.1 x64](https://balanov.pro/ai-audit/downloads/Balanov-PRO-Enterprise-Setup-Windows-1.1.1-x64.exe)
 
-**SHA-256:** `6fc280867145f17e7e5104ed36d6262de582e78a05736e717838d88cfa30fa57`
+**SHA-256:** `e8f24f5723c5b153b7064338e072d68eeaab2b76d246eda02bffdcd2916e3d86`
 
 Это отдельные установщики `1.1.1`, а не переименованный `0.8.1`. Они пока не имеют Authenticode-подписи, поэтому Windows может предупредить о неизвестном издателе.
 

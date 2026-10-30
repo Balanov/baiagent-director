@@ -120,7 +120,7 @@ async function main() {
 
     let chat;
     if (process.env.BAIAGENT_SMOKE_SKIP_CHAT !== '1') {
-      await evaluate(`(() => { const input = document.querySelector('.advisor-input input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Назови три предложения компании со ссылками на источники. Коротко.'); input.dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('.advisor-input').requestSubmit(); })()`);
+      await evaluate(`(() => { const input = document.querySelector('.advisor-input input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Что говорят клиенты? Ответь одним коротким предложением со ссылкой на источник. Если отзывы не найдены, прямо скажи.'); input.dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('.advisor-input').requestSubmit(); })()`);
       const chatDeadline = Date.now() + 300000;
       while (Date.now() < chatDeadline) {
         chat = await evaluate(`({busy:Boolean(document.querySelector('.advisor-thinking')),text:document.querySelector('.advisor-message.is-advisor:last-of-type')?.textContent||'',citations:document.querySelectorAll('.message-citations button').length})`);
