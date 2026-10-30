@@ -6,7 +6,8 @@ const CATEGORIES = ['revenue', 'cost', 'offering'];
 const MODES = ['standard-agent', 'custom', 'simple-automation', 'data-preparation'];
 const INDUSTRIES = [
   'manufacturing', 'retail', 'logistics', 'distribution', 'construction', 'healthcare',
-  'education', 'professional', 'finance', 'food', 'cybersecurity', 'government',
+  'education', 'professional', 'finance', 'food', 'cybersecurity', 'government', 'software',
+  'service-marketplace',
 ];
 
 const EVIDENCE = Object.freeze([{ sourceId: 'site', quote: 'Компания описывает подтверждённое предложение и порядок работы.' }]);
@@ -136,6 +137,29 @@ describe('industry-specific audit playbooks', () => {
     const food = categoryResult('food', 'offering');
     expect(food.implementationMode).toBe('data-preparation');
     expect(food.riskControls.join(' ')).toContain('аллерген');
+  });
+
+  it('keeps marketplace work distinct from the services of independent specialists', () => {
+    const result = enrich('service-marketplace');
+    expect(result.map(item => item.processName).join(' ')).not.toMatch(/юридическ|договор/i);
+    const moderation = result.find(item => item.category === 'cost');
+    expect(moderation.escalation).toContain('Модератор');
+    expect(moderation.integrations.join(' ')).toContain('RBAC');
+    expect(moderation.riskControls.join(' ')).toContain('Не допускать');
+    expect(moderation.riskControls.join(' ')).toContain('персональные данные');
+  });
+
+  it('keeps a recognized software company in its own process despite secondary industry mentions', () => {
+    const result = enrichAuditOpportunities({
+      opportunities: CATEGORIES.map(category => opportunity(category)),
+      profile: { industry: { id: 'software', label: 'Программные продукты' } },
+      research: { sources: [{ kind: 'company-site', title: 'Продукт для специалистов', text: 'Документация содержит материалы об органах власти и строительных организациях.' }] },
+    });
+    expect(result).toHaveLength(3);
+    expect(result.map(item => item.processName).join(' ')).not.toMatch(/государственн|тендерн|BIM/i);
+    expect(result.find(item => item.category === 'revenue').processName).toBe('Квалификация запроса по программному продукту');
+    expect(result.find(item => item.category === 'cost').processName).toContain('документации продукта');
+    expect(result.every(item => item.riskControls.join(' ').includes('профессиональн'))).toBe(true);
   });
 
   it('uses a cautious process based on the real offering for an unknown industry', () => {

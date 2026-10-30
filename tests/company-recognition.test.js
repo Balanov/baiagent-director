@@ -16,6 +16,20 @@ describe('company identity and industry recognition', () => {
     expect(companyNameFromPages(sources, 'https://www.kamaz.ru/')).toBe('КАМАЗ');
   });
 
+  it('uses a confirmed organization or repeated title brand instead of a homepage slogan', () => {
+    const consultant = [
+      { title: '"КонсультантПлюс" - законодательство РФ: кодексы и законы', text: 'Справочная правовая система.' },
+      { title: 'Новости КонсультантПлюс', organizationName: 'КонсультантПлюс', text: 'О компании.' },
+    ];
+    const restaurant = [
+      { title: 'Теремок - официальный сайт сети ресторанов русской кухни', text: 'Сеть ресторанов.' },
+      { title: 'О компании - Теремок', text: 'О сети ресторанов.' },
+    ];
+    expect(companyNameFromPages(consultant, 'https://www.consultant.ru/')).toBe('КонсультантПлюс');
+    expect(companyNameFromPages(restaurant, 'https://teremok.ru/')).toBe('Теремок');
+    expect(companyNameFromPages([{ title: 'Выбирайте лучшее для ваших задач', text: 'Описание услуг.' }], 'https://profi.ru/')).toMatch(/^profi$/i);
+  });
+
   it('does not let manufacturer leasing navigation outweigh actual production', () => {
     const research = { companyName: 'КАМАЗ', sources: [{ id: 'site-1', kind: 'company-site', title: 'КАМАЗ', url: 'https://kamaz.ru/', text: kamazText }] };
     const profile = createBusinessProfile(research);

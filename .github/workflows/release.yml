@@ -19,6 +19,10 @@ jobs:
             command: npm run dist:win
             artifact: windows
             files: release/*.exe
+          - os: windows-latest
+            command: npm run dist:win:enterprise
+            artifact: windows-enterprise
+            files: release-enterprise/*.exe
           - os: ubuntu-latest
             command: npm run dist:linux
             artifact: linux

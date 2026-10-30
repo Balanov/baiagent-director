@@ -2,11 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, ArrowUpRight, Check, CheckCircle2, Download, FileSearch, Globe2, Laptop, LoaderCircle, LockKeyhole, Monitor, ShieldCheck, Smartphone } from 'lucide-react';
 import { createEvidenceBasedFallback } from '../shared/fallback.js';
 import { buildPilotPlan } from '../shared/verification.js';
+import { createAdvisorActionOutcome, validateAdvisorAction } from '../shared/advisor-actions.js';
 import { researchErrorMessage } from '../shared/research-error.js';
 import { DIRECTOR_WINDOWS_DOWNLOAD, ENTERPRISE_WINDOWS_DOWNLOAD, RELEASE_VERSION } from '../shared/release.js';
 import ResultDashboard from './ResultDashboard.jsx';
 import './styles.css';
 import './audit.css';
+import './workspace.css';
 
 const DESKTOP = typeof window !== 'undefined' && Boolean(window.director?.isDesktop);
 const ENTERPRISE = import.meta.env.MODE === 'enterprise';
@@ -161,12 +163,14 @@ export default function App() {
   const selected = result?.analysis.opportunities.find(item => item.id === selectedId) || result?.analysis.opportunities[0];
   const liveMessage = progress?.draftChars > 0 ? `${progress.message}: ${progress.draftChars.toLocaleString('ru-RU')} знаков` : progress?.message || friendlyStatus(progress);
 
-  async function start(event) {
+  async function start(event, requestedUrl) {
     event?.preventDefault();
-    if (!url.trim() || phase === 'working') return;
-    setPhase('working'); setError(''); setResult(null); setSaved(false); setProgress(null); setActivityLog([]); setDisplayedPercent(2);
+    const targetUrl = String(requestedUrl || url).trim();
+    if (!targetUrl || phase === 'working') return;
+    setUrl(targetUrl);
+    setPhase('working'); setError(''); setResult(null); setSelectedId(null); setSaved(false); setProgress(null); setActivityLog([]); setDisplayedPercent(2);
     try {
-      const data = DESKTOP ? await window.director.research(url) : await researchOnWeb(url, setProgress);
+      const data = DESKTOP ? await window.director.research(targetUrl) : await researchOnWeb(targetUrl, setProgress);
       setResult(data); setSelectedId(data.analysis.opportunities[0]?.id || null); setPhase('result');
     } catch (reason) {
       console.error(reason);
@@ -174,46 +178,119 @@ export default function App() {
     }
   }
 
-  function reset() {
-    setPhase('idle'); setResult(null); setProgress(null); setError(''); setSaved(false);
+  async function startNewAudit(nextUrl) {
+    if (!nextUrl.trim() || phase === 'working') return;
+    setError('');
+    if (DESKTOP) await window.director.resetSession();
+    await start(null, nextUrl);
+  }
+
+  async function reset() {
+    if (DESKTOP) await window.director.resetSession();
+    setPhase('idle'); setResult(null); setSelectedId(null); setProgress(null); setError(''); setSaved(false); setUrl('');
     setTimeout(() => inputRef.current?.focus(), 50);
   }
 
+  function applyResearchResult(data) {
+    setResult(data);
+    setSelectedId(data.analysis.opportunities[0]?.id || null);
+    setSaved(false);
+  }
+
   async function preparePilot() {
-    if (!selected || !result) return;
-    if (DESKTOP) {
-      const response = await window.director.savePilot(selected.id);
-      if (response.saved) setSaved(true);
-    } else {
+    if (!selected || !result) return createAdvisorActionOutcome('error', 'Сначала выберите направление для плана пилота.');
+    setError('');
+    try {
+      if (DESKTOP) {
+        const response = await window.director.savePilot(selected.id);
+        if (response.status === 'canceled' || !response.saved) return createAdvisorActionOutcome('canceled', 'Сохранение отменено. Файл не создан, исследование не изменилось.');
+        setSaved(true);
+        return createAdvisorActionOutcome('completed', 'План пилота сохранён в выбранном файле.');
+      }
       saveWebPilot(result, selected); setSaved(true);
+      return createAdvisorActionOutcome('completed', 'Файл плана пилота передан в загрузки браузера.');
+    } catch (reason) {
+      setError(reason.message);
+      return createAdvisorActionOutcome('error', `Не удалось сохранить план пилота: ${reason.message}`);
     }
   }
 
   async function addDocuments() {
-    if (!DESKTOP || adding) return;
+    if (!DESKTOP || adding) return createAdvisorActionOutcome('error', 'Добавление документов сейчас недоступно.');
     setAdding(true); setError('');
     try {
-      const data = await window.director.addDocuments();
-      setResult(data); setSelectedId(data.analysis.opportunities[0]?.id || null);
-    } catch (reason) { setError(reason.message); } finally { setAdding(false); }
+      const response = await window.director.addDocuments();
+      if (response.status === 'canceled') return createAdvisorActionOutcome('canceled', 'Выбор документов отменён. Исследование не изменилось.');
+      if (response.status !== 'completed' || !response.result) throw new Error('Локальное приложение не подтвердило добавление документов');
+      applyResearchResult(response.result);
+      return createAdvisorActionOutcome('completed', response.addedCount
+        ? `Добавлено документов: ${response.addedCount}. Исследование перестроено с их учётом.`
+        : 'Выбранные документы уже есть в исследовании. Ничего не изменилось.');
+    } catch (reason) {
+      setError(reason.message);
+      return createAdvisorActionOutcome('error', `Не удалось добавить документы: ${reason.message}`);
+    } finally { setAdding(false); }
   }
 
   async function addFolder() {
-    if (!DESKTOP || folderBusy) return;
+    if (!DESKTOP || folderBusy) return createAdvisorActionOutcome('error', 'Выбор папки сейчас недоступен.');
     setFolderBusy(true); setError('');
     try {
-      const data = await window.director.addFolder();
-      setResult(data); setSelectedId(data.analysis.opportunities[0]?.id || null);
-    } catch (reason) { setError(reason.message); } finally { setFolderBusy(false); }
+      const response = await window.director.addFolder();
+      if (response.status === 'canceled') return createAdvisorActionOutcome('canceled', 'Выбор или чтение папки отменено. Исследование не изменилось.');
+      if (response.status !== 'completed' || !response.result) throw new Error('Локальное приложение не подтвердило чтение папки');
+      applyResearchResult(response.result);
+      return createAdvisorActionOutcome('completed', `Прочитано документов из выбранной папки: ${response.addedCount}. Исследование перестроено.`);
+    } catch (reason) {
+      setError(reason.message);
+      return createAdvisorActionOutcome('error', `Не удалось добавить папку: ${reason.message}`);
+    } finally { setFolderBusy(false); }
   }
 
   async function forgetFolder() {
-    if (!DESKTOP || folderBusy) return;
+    if (!DESKTOP || folderBusy) return createAdvisorActionOutcome('error', 'Исключение документов сейчас недоступно.');
     setFolderBusy(true); setError('');
     try {
-      const data = await window.director.forgetFolder();
-      setResult(data); setSelectedId(data.analysis.opportunities[0]?.id || null);
-    } catch (reason) { setError(reason.message); } finally { setFolderBusy(false); }
+      const response = await window.director.forgetFolder();
+      if (response.status !== 'completed' || !response.result) throw new Error('Локальное приложение не подтвердило исключение документов');
+      applyResearchResult(response.result);
+      return createAdvisorActionOutcome('completed', response.removedCount
+        ? 'Документы исключены из сессии, исследование перестроено без них. Исходные файлы на диске остались.'
+        : 'В исследовании уже не было локальных документов. Ничего не изменилось.');
+    } catch (reason) {
+      setError(reason.message);
+      return createAdvisorActionOutcome('error', `Не удалось исключить документы: ${reason.message}`);
+    } finally { setFolderBusy(false); }
+  }
+
+  async function performAdvisorAction(action) {
+    const opportunities = result?.analysis.opportunities || [];
+    const validation = validateAdvisorAction(action, {
+      desktop: DESKTOP,
+      steps: ['audit', 'direction', 'plan', 'pilot', 'documents'],
+      opportunities,
+      selectedOpportunityId: selected?.id,
+      hasDocuments: Boolean(result?.research.sources.some(source => source.kind === 'local-document')),
+    });
+    if (!validation.ok) return createAdvisorActionOutcome('error', validation.error.message);
+    if (action.type === 'select_opportunity') {
+      const next = opportunities.find(item => item.id === action.opportunityId);
+      setSelectedId(next.id); setSaved(false);
+      return createAdvisorActionOutcome('completed', `Выбрано направление «${next.processName || next.title}». План и пилот обновлены.`);
+    }
+    if (action.type === 'add_documents') return addDocuments();
+    if (action.type === 'exclude_documents') return forgetFolder();
+    if (action.type === 'export_pilot') return preparePilot();
+    if (action.type === 'reset_session') {
+      try {
+        await reset();
+        return createAdvisorActionOutcome('completed', 'Сессия очищена. Исходные файлы на диске остались.');
+      } catch (reason) {
+        setError(reason.message);
+        return createAdvisorActionOutcome('error', `Не удалось очистить сессию: ${reason.message}`);
+      }
+    }
+    return createAdvisorActionOutcome('error', 'Переход выполняется в текущем рабочем пространстве.');
   }
 
   function openSource(source) {
@@ -299,8 +376,8 @@ export default function App() {
 
     {phase === 'result' && result && selected && <ResultDashboard
       result={result} selected={selected} onSelect={id => { setSelectedId(id); setSaved(false); }}
-      onReset={reset} onOpen={openSource} onSave={preparePilot} saved={saved} desktop={DESKTOP}
-      onAddDocuments={addDocuments} onAddFolder={addFolder} onForgetFolder={forgetFolder}
+      onReset={reset} onStartNewAudit={startNewAudit} onOpen={openSource} onSave={preparePilot} saved={saved} desktop={DESKTOP}
+      onAddDocuments={addDocuments} onAddFolder={addFolder} onForgetFolder={forgetFolder} onAction={performAdvisorAction}
       adding={adding} folderBusy={folderBusy} error={error} onUseBrowser={useBrowserOnPhone}
     />}
 

@@ -1,5 +1,6 @@
 import { getSolution, recommendSolution } from './solutions.js';
 import { normalizeEvidenceText } from './verification.js';
+import { classifyEvidence, PROCESS_EVIDENCE_NOTES } from './evidence-quality.js';
 
 const CATEGORIES = ['revenue', 'cost', 'offering'];
 const CATEGORY_ORDER = new Map(CATEGORIES.map((category, index) => [category, index]));
@@ -158,6 +159,7 @@ export const PROCESS_PLAYBOOKS = {
       businessMetric: 'Доля обращений, превращённых в корректно оформленные перевозки.',
       simpleAlternative: 'Обязательная форма заявки с блокировкой расчёта при незаполненных параметрах.',
       solutionId: 'chatbot',
+      evidencePattern: /заявк[а-яё]*\s+на\s+(?:доставк|перевозк|отправлен)|оформить\s+(?:доставк|отправлен)|рассчитать\s+(?:стоимость|тариф|доставк)|вес\s+и\s+габарит|параметр[а-яё]*\s+отправлен/i,
       riskControls: ['Не принимать запрещённый или неопознанный груз автономно.', 'Не обещать срок и цену вне утверждённых правил.', 'Менять адрес и условия только после подтверждения оператора.'],
     }),
     cost: defineProcess({
@@ -174,6 +176,7 @@ export const PROCESS_PLAYBOOKS = {
       businessMetric: 'Сокращение задержек закрытия перевозки из-за документов и неразобранных исключений.',
       simpleAlternative: 'Скан-контроль обязательных реквизитов и единая очередь ручной сверки исключений.',
       solutionId: 'ocr-idp',
+      evidencePattern: /накладн|транспортн[а-яё]*\s+документ|сопроводительн[а-яё]*\s+документ|акт[а-яё]*\s+(?:при[её]ма|при[её]мки|расхожден)|сч[её]т[- ]фактур|реестр[а-яё]*\s+(?:отправлен|документ)/i,
       riskControls: ['Не проводить документ с нераспознанными критическими полями.', 'Не закрывать претензию и не менять фактическое количество автономно.', 'Сохранять изображение-источник и историю ручных исправлений.'],
     }),
     offering: defineProcess({
@@ -190,6 +193,7 @@ export const PROCESS_PLAYBOOKS = {
       businessMetric: 'Доля исключений, для которых клиент и оператор получили согласованный следующий шаг.',
       simpleAlternative: 'Регламентные шаблоны уведомлений, запускаемые оператором из списка подтверждённых событий.',
       implementationMode: 'simple-automation',
+      evidencePattern: /отслеживан|статус[а-яё]*\s+(?:отправлен|заказ|доставк)|события\s+перевозки|уведомлен/i,
       riskControls: ['Не сообщать причины и новые сроки без подтверждения.', 'Повторная доставка события не должна порождать дубли уведомлений.', 'Спорное изменение условий требует оператора.'],
     }),
   },
@@ -415,6 +419,60 @@ export const PROCESS_PLAYBOOKS = {
     }),
   },
 
+  'service-marketplace': {
+    revenue: defineProcess({
+      processName: 'Квалификация запроса и подбор специалистов на платформе',
+      input: 'Задача заказчика, категория, место и формат работы, срок, бюджетные ограничения и критерии выбора специалиста.',
+      work: 'Проверить полноту задачи, запросить недостающие параметры и подготовить подбор по опубликованным правилам платформы без обещания результата работы специалиста.',
+      output: 'Структурированный запрос и список подходящих специалистов с основаниями подбора и нерешёнными вопросами.',
+      escalation: 'Нестандартные, опасные и профессионально значимые условия передаются модератору; договорённости и результат подтверждают заказчик и специалист.',
+      owner: 'Владелец клиентского сценария платформы и руководитель модерации категорий.',
+      requiredData: ['Обезличенные запросы заказчиков', 'Правила категорий и подбора', 'Эталонные подборы и причины отказов'],
+      integrations: ['Каталог специалистов через подтверждённый интерфейс', 'CRM или очередь обращений платформы'],
+      baselineMetrics: ['Полнота запроса', 'Время до первого релевантного отклика', 'Доля запросов без подходящего специалиста'],
+      qualityMetrics: ['Корректность категории', 'Полнота параметров подбора', 'Доля подтверждённых модератором подборов'],
+      businessMetric: 'Доля запросов, приведших к подтверждённому выбору специалиста без неверной маршрутизации.',
+      simpleAlternative: 'Пошаговая форма запроса и ручная проверка релевантности откликов модератором.',
+      solutionId: 'lead-scoring',
+      evidencePattern: /сервис\s+поиска\s+специалист|специалисты\s+напишут|подобрать\s+специалист|выбрать\s+специалист|поиск\s+специалист|отклик\w*\s+специалист/i,
+      riskControls: ['Не обещать результат работы независимого специалиста.', 'Не назначать цену и не принимать оплату от имени специалиста.', 'Не использовать чувствительные признаки для скрытого ранжирования людей.'],
+    }),
+    cost: defineProcess({
+      processName: 'Проверка анкет и подтверждающих документов специалистов',
+      input: 'Анкета специалиста, разрешённые документы, правила категории и результаты предыдущих проверок модератора.',
+      work: 'Проверить комплектность полей и сроки документов, сопоставить анкету с требованиями категории и подготовить карточку модератору с источниками.',
+      output: 'Карточка комплектности и расхождений без автоматического решения о допуске специалиста.',
+      escalation: 'Модератор подтверждает подлинность, квалификацию, допуск, ограничение и отклонение анкеты; спорный случай получает ручной пересмотр.',
+      owner: 'Руководитель модерации и владелец правил верификации специалистов.',
+      requiredData: ['Правила верификации по категориям', 'Обезличенные анкеты и эталонные решения', 'Журнал сроков и оснований проверок'],
+      integrations: ['Система модерации с RBAC', 'Защищённое хранилище документов с ограниченным сроком доступа'],
+      baselineMetrics: ['Время первичной проверки', 'Число возвратов на уточнение', 'Доля расхождений после модерации'],
+      qualityMetrics: ['Полнота проверенных полей', 'Корректность ссылок на документы', 'Согласованность с эталонными решениями модератора'],
+      businessMetric: 'Сокращение ручной подготовки проверки при сохранении решения о допуске за модератором.',
+      simpleAlternative: 'Контрольный список документов и ручная очередь модерации по категориям.',
+      solutionId: 'ocr-idp',
+      evidencePattern: /паспорт|опыт\s+работы|образовани|верификац|проверяем\s+(?:каждого|анкет)|подтвердить\s+(?:паспорт|документ)|документ[а-яё]*\s+специалист/i,
+      riskControls: ['Не признавать документ подлинным автоматически.', 'Не допускать и не отклонять специалиста без модератора.', 'Минимизировать персональные данные, ограничить роли и срок хранения.', 'Проверять одинаковые правила для разных групп специалистов.'],
+    }),
+    offering: defineProcess({
+      processName: 'Проверка категорий услуг и прозрачности выбора специалиста',
+      input: 'Опубликованные категории, анкеты, отклики, ценовые предложения, отзывы и правила сравнения специалистов.',
+      work: 'Проверить полноту категории и критериев выбора, выявить неподтверждённые утверждения и подготовить изменения с источниками.',
+      output: 'Проект категории и сценария сравнения с явными условиями, ограничениями и следующим шагом заказчика.',
+      escalation: 'Владелец категории и модератор утверждают правила, статусы проверки и публикацию; платформа не выдаёт отклик за гарантию качества.',
+      owner: 'Владелец каталога услуг и руководитель клиентского продукта платформы.',
+      requiredData: ['Правила категорий и публикации анкет', 'Реальные вопросы заказчиков', 'Эталонные карточки и замечания модерации'],
+      integrations: ['CMS каталога для черновых изменений', 'Система анкет и отзывов в режиме чтения'],
+      baselineMetrics: ['Полнота обязательных полей', 'Число повторных вопросов о выборе', 'Доля неверно выбранных категорий'],
+      qualityMetrics: ['Подтверждённость статусов и условий', 'Полнота критериев сравнения', 'Корректность связи задачи и категории'],
+      businessMetric: 'Доля обращений, в которых заказчик выбирает подходящую категорию и понимает следующий проверяемый шаг.',
+      simpleAlternative: 'Утверждённый шаблон категории и ручная сверка анкет перед публикацией.',
+      solutionId: 'content',
+      evidencePattern: /сервис\s+поиска\s+специалист|специалисты\s+напишут|проверенные\s+профи|сравнить\s+цен|каталог\s+услуг|подобрать\s+специалист/i,
+      riskControls: ['Не выдавать отзыв или цену за гарантию качества.', 'Не смешивать категории и предложения разных специалистов.', 'Не публиковать статус проверки без подтверждения модератора.'],
+    }),
+  },
+
   professional: {
     revenue: defineProcess({
       processName: 'Квалификация обращения по профессиональной услуге',
@@ -531,6 +589,57 @@ export const PROCESS_PLAYBOOKS = {
       simpleAlternative: 'Статусная страница по фактическим событиям и ручные сообщения специалиста по критическим случаям.',
       implementationMode: 'custom',
       riskControls: ['Не сообщать отказ, лимит или подозрение автономно.', 'Не раскрывать внутренние риск-правила и чужие данные.', 'Использовать RBAC и подтверждённые события заявки.'],
+    }),
+  },
+
+  software: {
+    revenue: defineProcess({
+      processName: 'Квалификация запроса по программному продукту',
+      input: 'Задача клиента, пользователи, текущий инструмент, требуемые функции, интеграции, ограничения и ожидаемый способ работы.',
+      work: 'Проверить полноту запроса, сопоставить потребность с подтверждёнными возможностями выбранного продукта и подготовить вопросы продуктовому специалисту.',
+      output: 'Карточка потребности с подходящим сценарием продукта, источниками возможностей и открытыми техническими вопросами.',
+      escalation: 'Продуктовый специалист подтверждает применимость, совместимость, тариф и условия внедрения; специалист предметной области подтверждает профессиональные выводы.',
+      owner: 'Владелец программного продукта совместно с руководителем пресейла или клиентского сервиса.',
+      requiredData: ['Реальные запросы по программному продукту', 'Действующая документация и границы возможностей', 'Правила выбора тарифа и передачи внедрению'],
+      integrations: ['CRM или очередь обращений через подтверждённый интерфейс', 'Продуктовая документация в режиме чтения'],
+      baselineMetrics: ['Время до полной карточки запроса', 'Число повторных уточнений специалистом', 'Доля обращений, подготовленных к предметной демонстрации'],
+      qualityMetrics: ['Полнота требований и ограничений', 'Подтверждённость возможностей документацией', 'Корректность маршрута к специалисту'],
+      businessMetric: 'Доля запросов, переведённых в подтверждённый сценарий использования продукта без неподтверждённых обещаний.',
+      simpleAlternative: 'Анкета потребности, матрица возможностей продукта и ручная проверка продуктовым специалистом.',
+      solutionId: 'chatbot',
+      riskControls: ['Не приписывать продукту функции и интеграции, отсутствующие в документации.', 'Не назначать тариф и не обещать внедрение без ответственного специалиста.', 'Не выдавать ответ по программному продукту за юридическое, медицинское или иное профессиональное заключение.'],
+    }),
+    cost: defineProcess({
+      processName: 'Подготовка ответа поддержки по документации продукта',
+      input: 'Обращение пользователя, версия продукта, разрешённый контекст и действующая документация с ограничениями.',
+      work: 'Найти ответ в материалах соответствующей версии, подготовить черновик со ссылками и передать нестандартный случай специалисту поддержки.',
+      output: 'Черновой ответ с источником и версией либо карточка эскалации с воспроизводимым контекстом.',
+      escalation: 'Специалист поддержки подтверждает обходной путь, изменение конфигурации, статус дефекта и выводы предметной области.',
+      owner: 'Руководитель продуктовой поддержки и владелец базы знаний.',
+      requiredData: ['Обезличенные обращения и эталонные ответы', 'Версионированная документация', 'Правила эскалации и доступа к данным пользователя'],
+      integrations: ['Helpdesk через доступный API или очередь', 'База знаний с сохранением прав доступа'],
+      baselineMetrics: ['Время поиска подтверждённого ответа', 'Число исправлений специалистом', 'Доля ответов без источника'],
+      qualityMetrics: ['Соответствие ответа версии продукта', 'Полнота ссылок на документацию', 'Корректность эскалации нестандартных случаев'],
+      businessMetric: 'Сокращение времени подготовки поддержки при сохранении проверки специалистом и качества ответов.',
+      simpleAlternative: 'Поиск по версионированной документации и контрольный список перед отправкой ответа.',
+      solutionId: 'rag',
+      riskControls: ['Не смешивать инструкции разных версий и продуктов.', 'Не изменять конфигурацию и данные пользователя автономно.', 'При отсутствии подтверждённого ответа эскалировать, а не дополнять документацию догадкой.', 'Не выдавать инструкцию по продукту за профессиональное заключение.'],
+    }),
+    offering: defineProcess({
+      processName: 'Проверка полноты карточки программного продукта и тарифа',
+      input: 'Действующие возможности, сценарии использования, ограничения, условия тарифа, требования к данным и вопросы покупателей.',
+      work: 'Сверить карточку продукта с документацией, выявить пробелы и противоречия и подготовить изменения с источником каждого утверждения.',
+      output: 'Проект карточки продукта или тарифа с подтверждёнными возможностями, ограничениями и списком вопросов владельцу.',
+      escalation: 'Владелец продукта утверждает возможности и сценарии, ответственный за тарифы — условия оплаты, профильный специалист — профессиональные формулировки.',
+      owner: 'Владелец программного продукта и ответственный за продуктовый контент.',
+      requiredData: ['Действующая документация и правила тарифов', 'Реальные вопросы покупателей', 'Эталонные карточки и замечания владельца продукта'],
+      integrations: ['CMS или продуктовый каталог для черновика', 'Хранилище документации в режиме чтения'],
+      baselineMetrics: ['Полнота обязательных разделов карточки', 'Число повторных вопросов владельцу продукта', 'Время подготовки проверяемого изменения'],
+      qualityMetrics: ['Доля утверждений с актуальным источником', 'Полнота ограничений и условий тарифа', 'Отсутствие переноса возможностей между продуктами'],
+      businessMetric: 'Доля эталонных вопросов покупателей, закрытых подтверждённой карточкой без дополнительного уточнения.',
+      simpleAlternative: 'Утверждённый шаблон карточки и ручная сверка с документацией перед публикацией.',
+      solutionId: 'content',
+      riskControls: ['Не переносить функции одного продукта или тарифа на другой.', 'Не публиковать условия и ограничения без владельца продукта.', 'Не заменять профессиональную консультацию описанием программного продукта.'],
     }),
   },
 
@@ -761,9 +870,16 @@ const INDUSTRY_PATTERNS = {
   food: /ресторан|кейтеринг|кофейн|продукт\w*\s+питания|пицц/i,
 };
 
+export function auditIndustryFor(profile) {
+  const explicit = clean(profile?.industry?.id);
+  if (explicit === 'professional' && profile?.businessModel === 'service-marketplace') return 'service-marketplace';
+  return PROCESS_PLAYBOOKS[explicit] ? explicit : 'generic';
+}
+
 function industryFor(profile, research) {
   const explicit = clean(profile?.industry?.id);
-  if (PROCESS_PLAYBOOKS[explicit]) return explicit;
+  // A secondary page can mention another sector without changing the company's business.
+  if (explicit) return auditIndustryFor(profile);
   const ownSources = asArray(research?.sources).filter(source => source.kind === 'company-site');
   const text = [
     profile?.industry?.label, profile?.companyName, ...asArray(profile?.topOfferings),
@@ -1018,10 +1134,20 @@ function publishedProcessEvidence(research, pattern) {
 function publishedIndustryEvidence(research, profile) {
   const proof = profile?.industry?.evidence;
   const quote = clean(proof?.quote);
+  const pattern = profile?.industry?.pattern;
   const supportedKinds = new Set(['company-site', 'local-document', 'search-snippet', 'review-snippet']);
-  const source = asArray(research.sources).find(item => item.id === proof?.sourceId && supportedKinds.has(item.kind));
-  return source && quote && normalizeEvidenceText(source.text).includes(normalizeEvidenceText(quote))
-    ? [{ sourceId: source.id, url: source.url, sourceTitle: source.title, quote, kind: source.kind }] : [];
+  const sources = asArray(research.sources).filter(item => supportedKinds.has(item.kind));
+  const source = sources.find(item => item.id === proof?.sourceId);
+  const verified = (item, text) => normalizeEvidenceText(item.text).includes(normalizeEvidenceText(text))
+    ? [{ sourceId: item.id, url: item.url, sourceTitle: item.title, quote: text, kind: item.kind }] : [];
+  if (source && quote && (!pattern || pattern.test(quote))) return verified(source, quote);
+  for (const item of sources) {
+    if (!pattern) continue;
+    const sentences = String(item.text || '').match(/[^.!?…]+[.!?…]?/g) || [];
+    const descriptive = sentences.map(clean).find(sentence => sentence.length >= 30 && pattern.test(sentence));
+    if (descriptive) return verified(item, descriptive.length <= 420 ? descriptive : clean(descriptive.slice(0, 417)));
+  }
+  return [];
 }
 
 export function attachProcessEvidence(opportunities = [], { research = {}, market = {}, profile = {} } = {}) {
@@ -1031,26 +1157,43 @@ export function attachProcessEvidence(opportunities = [], { research = {}, marke
     const category = CATEGORIES.includes(opportunity?.category) ? opportunity.category : null;
     if (!category) return opportunity;
     const plan = planFor(industry, category, opportunity, market, profile, research);
-    if (plan === REVIEW_PROCESS) return { ...opportunity, processEvidence: { status: 'customer-experience', note: 'Отзывы подтверждают клиентский опыт, а не наличие внутреннего процесса разбора.' } };
-    const pattern = PROCESS_EVIDENCE_PATTERNS[industry]?.[category];
-    const published = publishedProcessEvidence(research, pattern);
+    if (plan === REVIEW_PROCESS) return { ...opportunity, processEvidence: { status: 'customer-experience', note: PROCESS_EVIDENCE_NOTES['customer-experience'] } };
+    const processClaim = { processName: plan.processName, processAction: plan.work };
+    const originalAndProcessClaim = { ...opportunity, ...processClaim };
+    const pattern = plan.evidencePattern || PROCESS_EVIDENCE_PATTERNS[industry]?.[category];
+    // A sector-specific pattern defines the new process. The old product title
+    // must not make its price proof of an unrelated appointment or handoff.
+    const selectionClaim = pattern ? processClaim : originalAndProcessClaim;
+    const published = publishedProcessEvidence(research, pattern).filter(proof => {
+      const source = asArray(research.sources).find(item => item.id === proof.sourceId);
+      const quality = classifyEvidence(processClaim, source, proof.quote);
+      return quality.directness === 'direct' && ['published-process', 'internal-document'].includes(quality.evidenceRole);
+    });
     const industryEvidence = publishedIndustryEvidence(research, profile);
-    const ownEvidence = asArray(opportunity.evidence).filter(proof => {
+    // Enrichment must not replace an already verified, process-specific quote
+    // with a generic industry source merely because it appears on our own site.
+    const selectedEvidence = asArray(opportunity.evidence).filter(proof => {
       const source = asArray(research.sources).find(item => item.id === proof?.sourceId);
-      return source?.kind === 'company-site' || source?.kind === 'local-document';
+      if (!source || (!EXTERNAL_SOURCE_KINDS.has(source.kind) && source.kind !== 'search-snippet')) return false;
+      const ownCatalogEvidence = category === 'offering' && EXTERNAL_SOURCE_KINDS.has(source.kind)
+        && firstNonEmpty(market?.offerings, research?.offerings).some(item => item.sourceId === proof.sourceId
+          && normalizeEvidenceText(item.quote) === normalizeEvidenceText(proof.quote));
+      return ownCatalogEvidence || classifyEvidence(selectionClaim, source, proof.quote).relevance === 'relevant';
+    }).sort((left, right) => {
+      const kind = proof => asArray(research.sources).find(item => item.id === proof?.sourceId)?.kind;
+      const rank = proof => {
+        const own = EXTERNAL_SOURCE_KINDS.has(kind(proof));
+        if (pattern && clean(proof.quote).length >= 35 && pattern.test(proof.quote)) return own ? 0 : 1;
+        return own ? 2 : kind(proof) === 'review-snippet' ? 4 : 3;
+      };
+      return rank(left) - rank(right);
     }).slice(0, 1);
-    const evidence = published.length ? published : pattern
-      ? (industryEvidence.length ? industryEvidence : ownEvidence)
-      : (ownEvidence.length ? ownEvidence : industryEvidence);
+    const evidence = published.length ? published : selectedEvidence.length ? selectedEvidence : industryEvidence;
     const status = published.length ? 'published-process' : 'industry-hypothesis';
-    const note = published.length
-      ? 'Собственный источник описывает соответствующий процесс; текущие показатели и недостатки всё равно требуют внутренней проверки.'
-      : 'Собственное описание именно этого процесса не найдено. Доказательство подтверждает только отрасль, а процесс предложен как отраслевая гипотеза — не как существующий порядок или проблема компании.';
     return {
       ...opportunity,
       evidence,
-      processEvidence: { status, note },
-      why: `${opportunity.why} ${note}`.slice(0, 1600),
+      processEvidence: { status, note: PROCESS_EVIDENCE_NOTES[status] },
       unknowns: unique([...asArray(opportunity.unknowns), !published.length && `Публичное описание процесса «${plan.processName}» не найдено; нужен внутренний регламент.`]).slice(0, 5),
     };
   });

@@ -99,6 +99,19 @@ describe('evidence-based advisor', () => {
     expect(market.reviews[0].themes).toEqual(expect.arrayContaining(['качество', 'доставка']));
     expect(answerAdvisor('Что в отзывах?', research).answer).toContain('128 отзывов');
   });
+  it('does not use reviews from another product sector as software-company evidence', () => {
+    const software = {
+      companyName: 'Example Software', requestedUrl: 'https://software.example/',
+      sources: [{ id: 'site-soft', kind: 'company-site', url: 'https://software.example/', title: 'Example Software', text: 'Разработчик программного обеспечения. Облачная платформа для совместной работы.' }],
+      offerings: [{ name: 'Team Cloud', sourceId: 'site-soft', quote: 'Облачная платформа Team Cloud.' }],
+      reviews: [
+        { sourceId: 'web-washing', sourceTitle: 'Example Software — стиральные машины', quote: '12 отзывов о стиральной машине. Покупатели оценивают качество стирки.', url: 'https://reviews.example/washing' },
+        { sourceId: 'web-team', sourceTitle: 'Team Cloud — отзывы', quote: '18 отзывов. Используем Team Cloud для совместной работы.', url: 'https://reviews.example/team' },
+      ],
+    };
+    const market = createMarketIntelligence(software);
+    expect(market.reviews.map(item => item.sourceId)).toEqual(['web-team']);
+  });
   it('does not compare prices of unrelated products', () => {
     const priced = { ...research, offerings: [{ name: 'Мыло А', price: '100 ₽', sourceId: 'site-1' }], alternatives: [{ name: 'Шампунь Б', offeringName: 'Шампунь Б', price: '500 ₽', sourceId: 'web-1' }] };
     expect(createMarketIntelligence(priced).priceComparisons).toHaveLength(0);
@@ -134,5 +147,18 @@ describe('evidence-based advisor', () => {
   it('keeps relevant evidence for a business question', () => {
     const parsed = parseAdvisorResponse('Сравните условия [[web-1]].', research, null, 'Что известно о конкурентах?');
     expect(parsed.citations[0]).toMatchObject({ sourceId: 'web-1', url: 'https://factory.example/' });
+  });
+  it('accepts structured answers only with verbatim evidence', () => {
+    const parsed = parseAdvisorResponse(JSON.stringify({
+      answer: 'Подтверждено собственное производство мыла.',
+      citations: [{ sourceId: 'site-1', quote: 'Собственное производство мыла.' }],
+    }), research, null, 'Что производит компания?');
+    expect(parsed.answer).toBe('Подтверждено собственное производство мыла.');
+    expect(parsed.citations[0]).toMatchObject({ sourceId: 'site-1', quote: 'Собственное производство мыла.' });
+    const fabricated = parseAdvisorResponse(JSON.stringify({
+      answer: 'Компания предлагает бронирование и доставку.',
+      citations: [{ sourceId: 'site-1', quote: 'Бронирование и бесплатная доставка.' }],
+    }), research, null, 'Что предлагает компания?');
+    expect(fabricated.citations).toEqual([]);
   });
 });

@@ -1,20 +1,38 @@
-import { verifyAnalysis } from './verification.js';
+import { verifyAnalysis, verifyFinalAnalysis } from './verification.js';
 import { createMarketIntelligence, offeringDisplayName } from './advisor.js';
 import { createBusinessProfile, executiveSummary } from './business.js';
-import { enrichAuditOpportunities } from './audit.js';
+import { enrichAuditOpportunities, PROCESS_PLAYBOOKS, auditIndustryFor } from './audit.js';
+import { classifyEvidence } from './evidence-quality.js';
+import { marketSubject } from './market-plan.js';
 
-function quoteFor(source, pattern) {
+function quoteFor(source, pattern, minimumLength = 20) {
   const sentences = source.text.match(/[^.!?…]+[.!?…]?/g) || [source.text];
-  const matching = sentences.filter(sentence => pattern.test(sentence) && sentence.trim().length >= 20).sort((a, b) => a.length - b.length);
-  const selected = (matching[0] || sentences.find(sentence => sentence.trim().length >= 20) || source.text).trim();
+  const matching = sentences.filter(sentence => pattern.test(sentence) && sentence.trim().length >= minimumLength).sort((a, b) => {
+    const score = sentence => (/возможн|позвол|предостав|получа|можно|регламент|правил|этап|сервис/i.test(sentence) ? 3 : 0)
+      + (/клиент|партн[её]р|пользовател|документ|пациент|заказчик/i.test(sentence) ? 1 : 0)
+      - (/подробнее|читать все|читать далее|перейти|главная/i.test(sentence) ? 2 : 0);
+    return score(b) - score(a) || a.length - b.length;
+  });
+  const selected = (matching[0] || sentences.find(sentence => sentence.trim().length >= minimumLength) || source.text).trim();
   if (selected.length <= 320) return selected;
-  const match = pattern.exec(selected);
-  if (!match) return selected.slice(0, 320);
-  let start = Math.max(0, match.index - 120);
-  let end = Math.min(selected.length, start + 320);
-  if (start > 0) start = selected.indexOf(' ', start) + 1 || start;
-  if (end < selected.length) end = selected.lastIndexOf(' ', end) || end;
-  return selected.slice(start, end).trim();
+  const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+  const candidates = [...selected.matchAll(new RegExp(pattern.source, flags))].map(match => {
+    const beforeStart = Math.max(0, match.index - 180);
+    const before = selected.slice(beforeStart, match.index);
+    const boundary = Math.max(...['.', '!', '?', '…'].map(mark => before.lastIndexOf(mark)));
+    const sentenceStart = boundary >= 0 ? beforeStart + boundary + 1 : -1;
+    let start = sentenceStart >= 0 && match.index - sentenceStart <= 200 ? sentenceStart : Math.max(0, match.index - 120);
+    if (start > 0 && start !== sentenceStart) start = selected.indexOf(' ', start) + 1 || start;
+    const remainder = selected.slice(match.index + match[0].length);
+    const punctuation = remainder.search(/[.!?…]/);
+    let end = punctuation >= 0 && punctuation <= 280 ? match.index + match[0].length + punctuation + 1 : Math.min(selected.length, start + 320);
+    if (end < selected.length && punctuation < 0) end = selected.lastIndexOf(' ', end) || end;
+    const quote = selected.slice(start, end).trim();
+    const context = selected.slice(Math.max(0, match.index - 100), match.index + 180);
+    const explanatory = /возможн|позвол|предостав|получа|можно|правил|регламент|клиент|партн[её]р|пользовател|документ|сервис|этап/i.test(context);
+    return { quote, score: match[0].length * 3 + (explanatory ? 35 : 0) + (start === sentenceStart ? 20 : 0) };
+  }).filter(item => item.quote.length >= minimumLength).sort((a, b) => b.score - a.score);
+  return candidates[0]?.quote || selected.slice(0, 320);
 }
 
 function evidenceFor(item, sources) {
@@ -48,9 +66,9 @@ function genericOpportunities(usable) {
 
 const INDUSTRY_PLAYBOOKS = {
   logistics: [
-    { title: 'Сократить путь от запроса на доставку к оформленному отправлению', category: 'revenue', action: 'В BAIagent собрать черновой сценарий: адреса, вес и габариты, срок, объявленная ценность, наложенный платёж и ограничения. Агент запрашивает недостающие параметры и подготавливает расчёт только по утверждённым тарифам; нестандартный маршрут и заказ подтверждает оператор.', metric: 'Доля полных запросов, время до расчёта и конверсия расчёта в отправление.', firstStep: 'Разобрать реальные обращения и выделить параметры, без которых оператор не может рассчитать отправление.' },
-    { title: 'Разгрузить операторов на статусных обращениях без потери контроля', category: 'cost', action: 'Настроить классификацию вопросов о статусе, изменении адреса, задержке, повреждении и возврате. BAIagent готовит ответ по разрешённым данным отслеживания и регламентам, а спорный случай передаёт оператору с историей и причиной эскалации.', metric: 'Время ответа, доля верной маршрутизации и число повторных обращений.', firstStep: 'Собрать обезличенную выборку статусных обращений и эталонные решения операторов.' },
-    { title: 'Связать обещание доставки с понятным сценарием решения проблемы', category: 'offering', action: 'Сформировать в BAIagent единую базу сценариев задержки, повреждения, возврата и изменения условий: что сообщить клиенту, какие данные запросить, какой следующий шаг и когда эскалировать. Публиковать только подтверждённые статусы и условия.', metric: 'Полнота решения при первом обращении и доля корректных эскалаций.', firstStep: 'Выбрать один проблемный сценарий и согласовать его эталонный регламент с владельцем сервиса.' },
+    { title: 'Сократить путь от запроса на доставку к оформленному отправлению', category: 'revenue', action: 'В BAIagent собрать черновой сценарий: адреса, вес и габариты, срок, объявленная ценность, наложенный платёж и ограничения. Агент запрашивает недостающие параметры и подготавливает расчёт только по утверждённым тарифам; нестандартный маршрут и заказ подтверждает оператор.', metric: 'Доля полных запросов, время до расчёта и конверсия расчёта в отправление.', evidencePattern: /заявк[а-яё]*\s+на\s+(?:доставк|перевозк|отправлен)|оформить\s+(?:доставк|отправлен)|рассчитать\s+(?:стоимость|тариф|доставк)|вес\s+и\s+габарит|параметр[а-яё]*\s+отправлен/i, firstStep: 'Разобрать реальные обращения и выделить параметры, без которых оператор не может рассчитать отправление.' },
+    { title: 'Обработка перевозочных документов и исключений', category: 'cost', action: 'Настроить извлечение согласованных полей из накладных и актов, связь документа с отправлением и карточку расхождения. BAIagent не закрывает претензию, не меняет количество и не проводит документ с нераспознанными критическими полями; решение остаётся за логистом.', metric: 'Время обработки комплекта, точность полей и время регистрации исключения.', evidencePattern: /накладн|транспортн[а-яё]*\s+документ|сопроводительн[а-яё]*\s+документ|акт[а-яё]*\s+(?:при[её]ма|при[её]мки|расхожден)|сч[её]т[- ]фактур|реестр[а-яё]*\s+(?:отправлен|документ)/i, firstStep: 'Собрать эталонные накладные и акты, статусы отправлений и правила исключений.' },
+    { title: 'Клиентские статусы доставки и правила исключений', category: 'offering', action: 'Сформировать в BAIagent единую базу подтверждённых событий перевозки и сценариев задержки, повреждения, возврата и изменения условий. По правилам события подготавливать разрешённый статус и следующий шаг; новые причины и сроки не выдумывать, спорный случай передавать оператору.', metric: 'Полнота решения при первом обращении, соответствие статуса событию и доля корректных эскалаций.', evidencePattern: /отслеживан|статус[а-яё]*\s+(?:отправлен|заказ|доставк)|события\s+перевозки|уведомлен/i, firstStep: 'Выбрать один статусный сценарий и согласовать его эталонный регламент с владельцем сервиса.' },
   ],
   cybersecurity: [
     { title: 'Превратить запрос на защиту в квалифицированный план внедрения', category: 'revenue', action: 'В BAIagent собрать пресейл-сценарий: защищаемые активы, бизнес-процесс, текущий контур, угроза, нормативные ограничения и критерии успеха. Агент сопоставляет потребность только с подтверждёнными продуктами и готовит вопросы инженеру, не обещая неподтверждённый уровень защиты.', metric: 'Полнота квалификации, время подготовки предложения и конверсия в техническую встречу.', firstStep: 'Разобрать реальные входящие запросы с пресейл-инженером и отметить недостающие исходные данные.' },
@@ -79,9 +97,35 @@ const INDUSTRY_PLAYBOOKS = {
   ],
 };
 
-function profileOpportunities(profile) {
+function evidenceForPlan(plan, baseEvidence, sources, catalogOfferings = []) {
+  const claim = { ...plan, why: 'Отраслевая гипотеза требует проверки на реальных данных компании.' };
+  const direct = plan.evidencePattern ? sources.flatMap(source => {
+    const sentences = source.text.match(/[^.!?…]+[.!?…]?/g) || [source.text];
+    if (!sentences.some(sentence => plan.evidencePattern.test(sentence) && sentence.trim().length >= 35)) return [];
+    const item = { sourceId: source.id, quote: quoteFor(source, plan.evidencePattern, 35) };
+    const evidence = evidenceFor(item, [source]);
+    const priority = ['company-site', 'local-document'].includes(source.kind) ? 0 : source.kind === 'search-snippet' ? 1 : ['industry-snippet', 'customer-snippet'].includes(source.kind) ? 2 : 3;
+    return evidence && classifyEvidence(claim, source, evidence.quote).relevance === 'relevant' ? [{ evidence, priority }] : [];
+  }).sort((left, right) => left.priority - right.priority).map(item => item.evidence) : [];
+  return uniqueEvidence([...direct, ...baseEvidence.map(item => {
+    const source = sources.find(candidate => candidate.id === item?.sourceId);
+    const ownCatalogEvidence = plan.category === 'offering' && source?.kind === 'company-site'
+      && [...(source.offerings || []), ...catalogOfferings].some(offering => offering.sourceId === item.sourceId && offering.quote === item.quote);
+    return source && (ownCatalogEvidence || classifyEvidence(claim, source, item.quote).relevance === 'relevant') ? evidenceFor(item, sources) : null;
+  })]);
+}
+
+function profileOpportunities(profile, sources = []) {
   if (!profile.industry?.evidence) return [];
-  const plans = INDUSTRY_PLAYBOOKS[profile.industry.id] || [];
+  const plans = INDUSTRY_PLAYBOOKS[profile.industry.id] || ['revenue', 'cost', 'offering'].flatMap(category => {
+    const process = PROCESS_PLAYBOOKS[auditIndustryFor(profile)]?.[category];
+    return process ? [{
+      title: process.processName, processName: process.processName, category,
+      action: `В BAIagent настроить проверяемый процесс: ${process.work} ${process.escalation}`,
+      metric: process.businessMetric, evidencePattern: process.evidencePattern,
+      firstStep: `Зафиксировать исходный замер и собрать разрешённые данные: ${process.requiredData.join('; ')}.`,
+    }] : [];
+  });
   const baseEvidence = uniqueEvidence([profile.industry.evidence, ...profile.segments.map(item => item.evidence)]);
   const common = {
     confidence: 'low',
@@ -91,10 +135,10 @@ function profileOpportunities(profile) {
   const result = plans.slice(0, 2).map(plan => ({
     ...common, ...plan,
     why: `Открытые материалы подтверждают направление «${profile.industry.label}». Это не утверждение о текущей проблеме, а отраслевая гипотеза: проверить конкретный процесс на данных компании до внедрения.`,
-    evidence: baseEvidence,
+    evidence: evidenceForPlan(plan, baseEvidence, sources),
     steps: [plan.firstStep, 'Собрать правила и эталонные ответы только из подтверждённых материалов.', 'Запустить ограниченный пилот BAIagent с обязательной проверкой человеком.', 'Сравнить результат с исходным периодом и решить: развивать, изменить или остановить.'],
   }));
-  if (profile.risks[0]) {
+  if (profile.risks[0] && profile.businessModel !== 'service-marketplace' && !plans[2]) {
     result.push({
       ...common,
       title: 'Подготовить контур непрерывности и клиентских коммуникаций на случай сбоя', category: 'offering',
@@ -106,9 +150,57 @@ function profileOpportunities(profile) {
     });
   } else if (plans[2]) {
     const plan = plans[2];
-    result.push({ ...common, ...plan, why: `Предложение опирается на подтверждённую отрасль и требует проверки на реальном клиентском сценарии. Это план пилота, а не утверждение о существующем недостатке.`, evidence: baseEvidence, steps: [plan.firstStep, 'Согласовать эталонный сценарий и ограничения с владельцем процесса.', 'Проверить черновые действия BAIagent на реальных обезличенных случаях.', 'Измерить пользу и принять решение о масштабировании.'] });
+    result.push({ ...common, ...plan, why: `Предложение опирается на подтверждённую отрасль и требует проверки на реальном клиентском сценарии. Это план пилота, а не утверждение о существующем недостатке.`, evidence: evidenceForPlan(plan, baseEvidence, sources), steps: [plan.firstStep, 'Согласовать эталонный сценарий и ограничения с владельцем процесса.', 'Проверить черновые действия BAIagent на реальных обезличенных случаях.', 'Измерить пользу и принять решение о масштабировании.'] });
   }
   return result;
+}
+
+function canonicalSoftwareOffering(item, sources, industry) {
+  if (industry !== 'software' || item?.price) return null;
+  const source = sources.find(candidate => candidate.id === item?.sourceId);
+  if (!source) return null;
+  let hint;
+  try { hint = decodeURIComponent(new URL(item.url || source.url).pathname).split('/').filter(Boolean).at(-1)?.replace(/[-_+]+/g, ' '); } catch { return null; }
+  if (!hint || hint.length < 2 || /^(?:software|products?|services?|solutions?|platform|ecosystem|enterprise|menu|catalog|shop|store)$/i.test(hint)) return null;
+  const expression = new RegExp(`(?:^|[^\\p{L}\\p{N}])(${hint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '[ -]+')})(?=$|[^\\p{L}\\p{N}])`, 'iu');
+  const lead = String(source.text || '').slice(0, 1200);
+  const name = lead.match(expression)?.[1];
+  if (!name || name.toLowerCase() === offeringDisplayName(item).toLowerCase()) return null;
+  return { ...item, name, displayName: name, quote: quoteFor(source, expression) };
+}
+
+function selectPrimaryOffering(market, profile, research, sources) {
+  if (profile.businessModel === 'service-marketplace') return null;
+  const subject = marketSubject(research, profile).subject;
+  const industry = profile.industry?.id;
+  const brandTokens = String(research.companyName || profile.companyName || '').toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(token => token.length >= 4 && !/^(?:официальный|сайт|компания|законодательство|выбирайте|россии|россия)$/i.test(token));
+  const homepageLead = String(sources.find(source => source.kind === 'company-site' && /^https?:\/\/[^/]+\/?$/i.test(source.url))?.text || sources.find(source => source.kind === 'company-site')?.text || '').slice(0, 1600).toLowerCase();
+  const candidates = market.offerings.map((item, index) => {
+    const canonical = canonicalSoftwareOffering(item, sources, industry);
+    const selected = canonical || item;
+    const name = offeringDisplayName(selected);
+    const normalized = name.toLowerCase();
+    const evidence = evidenceFor(selected, sources);
+    if (!evidence || /^(?:телевизоры(?:\s|$)|товары$|продукты$|услуги$|сервисы$|прайс-лист\b|цены\b|каталог\b)/i.test(name)) return null;
+    const brand = brandTokens.some(token => normalized.includes(token));
+    const audience = /юрист|бухгалтер|кадров|закупк|медицинск/i.test(subject) && new RegExp(subject.match(/юрист|бухгалтер|кадров|закупк|медицинск/i)[0], 'i').test(name);
+    const softwareProduct = industry === 'software' && /\bsoftware\b|\bsaas\b|программн|информационн[а-яё]*\s+систем/i.test(name);
+    const conciseProduct = name.length <= 70 && name.split(/\s+/).length <= 4
+      && !/^(?:start|meet|build|help|deliver|turn|unite|align|driving|ship|products|services)\b|high-quality|high-velocity|powered\s+by|from\s+scratch/i.test(name);
+    const topIndex = profile.topOfferings.indexOf(name);
+    const escapedName = normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const homepageMention = industry === 'software' && conciseProduct && name.length >= 3 && new RegExp(`(?:^|[^\\p{L}\\p{N}])${escapedName}(?=$|[^\\p{L}\\p{N}])`, 'iu').test(homepageLead);
+    const score = (homepageMention ? 70 : 0) + (canonical ? 28 : 0) + (brand && conciseProduct ? 32 : 0) + (audience ? 48 : 0) + (softwareProduct && conciseProduct ? 20 : 0)
+      + (conciseProduct ? 5 : 0) + (topIndex >= 0 ? 3 - Math.min(topIndex, 2) : 0) + (selected.price ? 2 : 0);
+    return { item: selected, index, score, brand };
+  }).filter(Boolean);
+  // A single side-page service is not automatically the core offer of a broad marketplace.
+  const relevant = industry === 'professional' && subject === 'профессиональные услуги'
+    ? candidates.filter(candidate => candidate.brand)
+    : candidates;
+  return relevant.sort((left, right) => right.score - left.score || left.index - right.index)[0]?.item || null;
 }
 
 export function createEvidenceBasedFallback(sources, requestedUrl = '', research = {}) {
@@ -117,8 +209,7 @@ export function createEvidenceBasedFallback(sources, requestedUrl = '', research
   const data = { ...research, sources, requestedUrl };
   const market = createMarketIntelligence(data);
   const profile = createBusinessProfile(data);
-  const weakOffering = item => /^(?:телевизоры(?:\s|$)|товары$|продукты$|услуги$|сервисы$|прайс-лист\b|цены\b|каталог\b)/i.test(offeringDisplayName(item));
-  const own = market.offerings.find(item => item.price && !weakOffering(item)) || market.offerings.find(item => offeringDisplayName(item).split(/\s+/).length >= 2 && !weakOffering(item)) || market.offerings[0];
+  const own = selectPrimaryOffering(market, profile, data, usable);
   const ownEvidence = evidenceFor(own, usable);
   const alternativeEvidence = market.alternatives.map(item => evidenceFor(item, usable)).filter(Boolean);
   const competitorEvidence = market.competitors.map(item => evidenceFor(item, usable)).filter(Boolean);
@@ -139,6 +230,8 @@ export function createEvidenceBasedFallback(sources, requestedUrl = '', research
       manufacturing: 'Связать продукцию с конкретной потребностью покупателя',
       retail: 'Ускорить выбор и подтверждение покупки',
       professional: 'Превратить экспертизу в квалифицированный запрос на консультацию',
+      software: 'Упростить путь от задачи к выбору программного продукта',
+      food: 'Упростить выбор блюда и оформление заказа',
     }[industry] || `Проверить рыночную позицию «${name}»`;
     const revenueAction = {
       cybersecurity: `Для предложения «${name}» собрать сценарий: риск клиента → необходимый уровень защиты → состав решения → доказательства → следующий шаг. Проверить его на реальных обращениях и не обещать уровень защиты, которого нет в материалах.`,
@@ -147,7 +240,9 @@ export function createEvidenceBasedFallback(sources, requestedUrl = '', research
       manufacturing: `Для предложения «${name}» связать свойства продукции, варианты, цену и сценарии использования. Проверить, какие доказательства помогают покупателю выбрать и не требуют повторного звонка.`,
       retail: `Для предложения «${name}» собрать сравнение вариантов, наличие, цену, доставку и возврат в одном сценарии выбора. Проверить, на каком шаге покупателю всё ещё нужен менеджер.`,
       professional: `Для практики «${name}» собрать сценарий квалификации: ситуация клиента, желаемый результат, сроки, документы, ограничения и следующий шаг. Агент готовит карточку для эксперта, но не выдаёт профессиональное заключение и не обещает результат.`,
-    }[industry] || `Собрать сравнительную матрицу по «${name}»: цена за сопоставимый объём, состав, упаковка, условия заказа, доказательства спроса. Затем проверить одну корректировку оффера на ограниченном канале без изменения всего каталога.`;
+      software: `Для программного продукта «${name}» собрать сценарий: задача и пользователи → подтверждённые возможности → ограничения и тариф → следующий шаг. Не обещать отсутствующие функции и не выдавать ответ по продукту за профессиональное заключение.`,
+      food: `Для предложения «${name}» связать выбор блюда, подтверждённый состав, доступность и оформление заказа. Вопросы аллергенов, замен и нестандартных условий передавать сотруднику.`,
+    }[industry] || `Собрать сравнительную матрицу по «${name}»: цена за сопоставимый объём, состав, формат, условия заказа, доказательства спроса. Затем проверить одну корректировку оффера на ограниченном канале без изменения всего каталога.`;
     const externalRevenueEvidence = competitorEvidence.length + alternativeEvidence.length + customerEvidence.length + marketPriceEvidence.length;
     opportunities.push({
       title: revenueTitle, category: 'revenue',
@@ -164,8 +259,17 @@ export function createEvidenceBasedFallback(sources, requestedUrl = '', research
       evidence: uniqueEvidence([ownEvidence, ...competitorEvidence, ...alternativeEvidence, ...customerEvidence, ...marketPriceEvidence]), confidence: externalRevenueEvidence > 1 ? 'medium' : 'low',
     });
     const playbook = INDUSTRY_PLAYBOOKS[industry] || [];
-    const offeringPlan = playbook.find(plan => plan.category === 'offering');
-    const costPlan = playbook.find(plan => plan.category === 'cost');
+    const processPlan = category => {
+      const process = PROCESS_PLAYBOOKS[auditIndustryFor(profile)]?.[category];
+      return process ? {
+        title: process.processName, processName: process.processName,
+        action: `В BAIagent настроить проверяемый процесс: ${process.work} ${process.escalation}`,
+        metric: process.businessMetric, evidencePattern: process.evidencePattern,
+        firstStep: `Зафиксировать исходный замер и собрать разрешённые данные: ${process.requiredData.join('; ')}.`,
+      } : null;
+    };
+    const offeringPlan = playbook.find(plan => plan.category === 'offering') || processPlan('offering');
+    const costPlan = playbook.find(plan => plan.category === 'cost') || processPlan('cost');
     opportunities.push({
       title: offeringPlan?.title || `Усилить цифровую витрину «${name}»`, category: 'offering',
       why: customerEvidence.length
@@ -180,7 +284,7 @@ export function createEvidenceBasedFallback(sources, requestedUrl = '', research
       unknowns: ['Нужны реальные вопросы покупателей и владелец проверки ответов', 'Нужно подтвердить, какие характеристики и условия влияют на выбор'],
       decision: 'Оставить новый сценарий, только если эталонная проверка и ограниченный пилот подтверждают качество и пользу.',
       steps: offeringPlan ? [offeringPlan.firstStep, `Проверить сценарий на предложении «${name}», внешних критериях выбора и эталонных обращениях.`, 'Запустить ограниченный пилот BAIagent с подтверждением человеком.', 'Сравнить выбранные метрики и решить: развивать, изменить или остановить.'] : ['Собрать вопросы из звонков, писем, внешних материалов и поисковых подсказок.', 'Отметить, на какие вопросы карточка уже отвечает подтверждёнными данными.', 'Дополнить структуру карточки и связать её с ответственным менеджером.', 'Сравнить обращения и целевые действия до и после.'],
-      evidence: uniqueEvidence([ownEvidence, ...customerEvidence, ...marketPriceEvidence, ...reviewEvidence, offeringPlan ? profile.industry?.evidence : null]), confidence: customerEvidence.length ? 'medium' : 'low',
+      evidence: offeringPlan ? evidenceForPlan(offeringPlan, uniqueEvidence([ownEvidence, ...customerEvidence, ...marketPriceEvidence, ...reviewEvidence, profile.industry?.evidence]), usable, market.offerings) : uniqueEvidence([ownEvidence, ...customerEvidence, ...marketPriceEvidence]), confidence: customerEvidence.length ? 'medium' : 'low',
     });
     opportunities.push(reviewEvidence.length ? {
       title: 'Превратить темы отзывов в управляемый цикл улучшений', category: 'cost',
@@ -199,11 +303,11 @@ export function createEvidenceBasedFallback(sources, requestedUrl = '', research
       unknowns: ['Нужны актуальные регламенты и обезличенная выборка обращений', 'Нужно назначить владельца процесса и исходную метрику'],
       decision: 'Подключать следующие процессы только после устойчивого качества ответов на эталонной выборке.',
       steps: costPlan ? [costPlan.firstStep, 'Зафиксировать исходную метрику, правила и критерии остановки.', 'Проверить черновые действия BAIagent на эталонной выборке с человеком.', 'Сравнить результат с исходным и принять решение о масштабировании.'] : ['Выбрать один тип обращений и назначить владельца.', 'Загрузить каталог, прайс и правила в локальный контур.', 'Проверить ответы на эталонной выборке и зафиксировать ошибки.', 'Запустить черновые ответы с подтверждением человеком и измерить эффект.'],
-      evidence: uniqueEvidence([ownEvidence, costPlan ? profile.industry?.evidence : null]), confidence: 'low',
+      evidence: costPlan ? evidenceForPlan(costPlan, uniqueEvidence([ownEvidence, profile.industry?.evidence]), usable) : uniqueEvidence([ownEvidence]), confidence: 'low',
     });
   }
 
-  if (!opportunities.length) opportunities.push(...profileOpportunities(profile));
+  if (!opportunities.length) opportunities.push(...profileOpportunities(profile, usable));
   if (!opportunities.length) opportunities.push(...genericOpportunities(usable));
   if (!opportunities.length) {
     const source = usable[0];
@@ -211,7 +315,7 @@ export function createEvidenceBasedFallback(sources, requestedUrl = '', research
   }
 
   const swot = [];
-  if (ownEvidence) swot.push({ category: 'strength', title: `Подтверждённое предложение «${own ? offeringDisplayName(own) : profile.industry?.label}» даёт конкретную основу для отстройки и проверки спроса.`, evidence: [ownEvidence] });
+  if (ownEvidence) swot.push({ category: 'strength', title: `Предложение «${own ? offeringDisplayName(own) : profile.industry?.label}» подтверждено собственной страницей: это исходный объект проверки клиентского сценария, а не оценка всего портфеля или доказательство преимущества.`, evidence: [ownEvidence] });
   else if (profile.industry?.evidence) swot.push({ category: 'strength', title: `Специализация «${profile.industry.label}» подтверждена материалами и позволяет строить отраслевой, а не универсальный сценарий.`, evidence: [profile.industry.evidence] });
   if (competitorEvidence.length) swot.push({ category: 'threat', title: `В одном поисковом поле с компанией присутствуют ${market.competitors.slice(0, 3).map(item => item.name).join(', ')}: покупателю есть с чем сравнить предложение.`, evidence: competitorEvidence.slice(0, 2) });
   else if (alternativeEvidence.length) swot.push({ category: 'threat', title: 'Покупатель может сравнить предложение с найденными внешними альтернативами; сравнение требует сопоставимых условий.', evidence: alternativeEvidence.slice(0, 2) });
@@ -222,7 +326,6 @@ export function createEvidenceBasedFallback(sources, requestedUrl = '', research
   const negativeReview = market.reviews.find(item => /не рекоменд|не получил|сложно оценить|претенз|плохо|ужас|не порядоч/i.test(item.quote));
   const negativeEvidence = evidenceFor(negativeReview, usable);
   if (negativeEvidence) swot.push({ category: 'weakness', title: 'В открытых откликах есть критический клиентский опыт: нужно разобрать конкретные случаи и устранить причину, а не усреднять репутацию.', evidence: [negativeEvidence] });
-  else if (ownEvidence && market.coverage.withPrices < market.offerings.length) swot.push({ category: 'weakness', title: 'Не для всех найденных предложений подтверждена цена: цифровая витрина пока не даёт полного основания для сравнения.', evidence: [ownEvidence] });
   else if (!reviewEvidence.length && (ownEvidence || profile.industry?.evidence)) swot.push({ category: 'weakness', title: 'Клиентский опыт не подтверждён найденными открытыми отзывами: это пробел доказательной базы, требующий внутренних обращений, а не вывод о плохой репутации.', evidence: [ownEvidence || profile.industry.evidence] });
 
   const hostname = (() => { try { return new URL(requestedUrl).hostname.replace(/^www\./, ''); } catch { return ''; } })();
@@ -238,5 +341,8 @@ export function enrichAnalysisWithAudit(analysis, research = {}) {
   const market = analysis.market || createMarketIntelligence(research);
   const profile = analysis.profile || createBusinessProfile(research);
   const enriched = enrichAuditOpportunities({ opportunities: analysis.opportunities, research, market, profile });
-  return { ...analysis, opportunities: enriched.length ? enriched : analysis.opportunities, market, profile };
+  const candidate = { ...analysis, opportunities: enriched.length ? enriched : analysis.opportunities, market, profile };
+  return Array.isArray(research.sources) && research.sources.length
+    ? verifyFinalAnalysis(candidate, research.sources)
+    : candidate;
 }

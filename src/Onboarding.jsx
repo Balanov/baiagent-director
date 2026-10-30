@@ -15,7 +15,7 @@ export default function Onboarding({ companyName, website, opportunity, solution
 
     <div className="onboarding-path">
       <article className="is-done"><span><Check size={16} /></span><div><small>Уже готово в ИИ-советнике</small><strong>Гипотеза связана с доказательствами</strong><p>Задача: «{opportunity.processName || opportunity.title}». Результат проверяем на ваших данных, а не обещаем эффект заранее.</p></div></article>
-      <article><span>2</span><div><small>Следующий шаг · заявка и первичный аудит 0 ₽</small><strong>Подключить решение с проверкой процесса</strong><p>Бесплатно оставите заявку и согласуете первичный аудит. Последующее внедрение и абонентская плата — по прайсу и согласованному объёму работ.</p><button className="onboarding-primary" onClick={() => onOpen(implementationUrl)}>{solution ? 'Подключить 0 руб.' : 'Запросить аудит за 0 ₽'}<ArrowUpRight size={16} /></button></div></article>
+      <article><span>2</span><div><small>Следующий шаг · заявка и первичный аудит 0 ₽</small><strong>Подключить решение с проверкой процесса</strong><p>Бесплатно оставите заявку и согласуете первичный аудит. Последующее внедрение и абонентская плата — по прайсу и согласованному объёму работ.</p><button className="onboarding-primary" onClick={() => onOpen(implementationUrl)}>Подключить 0 руб.<ArrowUpRight size={16} /></button></div></article>
     </div>
 
     <div className="onboarding-safety"><ShieldCheck size={16} /><span>0 ₽ — заявка и первичный аудит, не последующее внедрение. Откроется заполненная заявка — ничего не отправится автоматически.</span></div>

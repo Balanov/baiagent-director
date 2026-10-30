@@ -36,8 +36,21 @@ export function createMarketIntelligence(research = {}) {
   const sources = research.sources || [];
   const offerings = research.offerings || sources.flatMap(source => source.offerings || []);
   const alternatives = research.alternatives || [];
-  const reviews = (research.reviews || []).map(reviewInsight);
   const plan = createMarketSearchPlan(research, createBusinessProfile(research));
+  const offeringNames = offerings.flatMap(item => [item.displayName, item.name])
+    .map(name => String(name || '').trim().toLowerCase()).filter(name => name.length >= 4 && name.length <= 80);
+  const reviews = (research.reviews || []).filter(item => {
+    if (plan.industry !== 'software') return true;
+    const source = sources.find(candidate => candidate.id === item.sourceId);
+    let text = `${item.sourceTitle || source?.title || ''} ${item.quote || source?.text || ''}`.toLowerCase();
+    const productMatch = offeringNames.some(name => text.includes(name));
+    // A brand containing "Software" is not evidence that a washing-machine review is about software.
+    for (const alias of [research.companyName, source?.companyName, source?.organizationName]) {
+      const value = String(alias || '').trim().toLowerCase();
+      if (value.length >= 4) text = text.split(value).join(' ');
+    }
+    return productMatch || plan.relevance.test(text);
+  }).map(reviewInsight);
   const ownUrl = research.requestedUrl || sources.find(source => source.kind === 'company-site')?.url || '';
   const rawCompetitors = research.competitors || sources.filter(source => source.kind === 'competitor-candidate').map(source => ({ name: source.competitorName || source.title, url: source.url, sourceId: source.id, sourceTitle: source.title, quote: source.marketQuote || source.text?.slice(0, 420) }));
   const competitors = rawCompetitors.filter(item => {
@@ -110,6 +123,12 @@ export function answerAdvisor(question, research = {}, analysis = {}, opportunit
     citations: opportunity.evidence || [],
   };
   const market = createMarketIntelligence(research);
+  if (/что.*понял|о мо[её]м бизнесе|о компании|расскажи о нас/.test(lower)) {
+    const facts = market.offerings.slice(0, 8);
+    if (!facts.length) return { answer: `Компания «${research.companyName || 'по указанному сайту'}» найдена, но конкретные предложения в материалах не распознаны. Добавьте каталог или документы — не буду заполнять пробелы догадками.`, citations: [] };
+    const subject = research.marketContext?.subject ? ` Профиль по полученным материалам: ${research.marketContext.subject}.` : '';
+    return { answer: `Это «${research.companyName || 'компания по указанному сайту'}».${subject} Подтверждённые предложения: ${facts.map(item => offeringDisplayName(item)).join('; ')}. Не подтверждённые источниками услуги и возможности не добавляю.`, citations: facts.map(item => itemLink(item, research)) };
+  }
   if (/цен|стоим|прайс|дорог|дёшев|дешев/.test(lower)) {
     const priced = market.offerings.filter(item => item.price).slice(0, 6);
     if (!priced.length) return { answer: 'В собранных материалах нет подтверждённых цен. Я не буду подставлять предположения: добавьте прайс или откройте страницы каталога.', citations: [] };

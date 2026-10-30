@@ -4,15 +4,27 @@ import { Arch, Platform, build } from 'electron-builder';
 delete process.env.ELECTRON_RUN_AS_NODE;
 const signed = process.argv.includes('--signed');
 const enterprise = process.argv.includes('--enterprise');
-const target = process.env.BAIAGENT_WINDOWS_TARGET || 'nsis';
-const output = resolve(process.env.BAIAGENT_WINDOWS_OUTPUT || (signed ? 'release-signed' : enterprise ? 'release-enterprise' : 'release'));
+const store = process.argv.includes('--store');
+const target = store ? 'appx' : process.env.BAIAGENT_WINDOWS_TARGET || 'nsis';
+const output = resolve(process.env.BAIAGENT_WINDOWS_OUTPUT || (store ? 'release-store' : signed ? 'release-signed' : enterprise ? 'release-enterprise' : 'release'));
 const electronDist = process.env.BAIAGENT_ELECTRON_DIST
   ? resolve(process.env.BAIAGENT_ELECTRON_DIST)
   : undefined;
 const certificateSubjectName = process.env.BAIAGENT_WIN_CERT_SUBJECT?.trim();
 const certificateSha1 = process.env.BAIAGENT_WIN_CERT_SHA1?.replace(/\s/g, '').toUpperCase();
 const timestampUrl = process.env.BAIAGENT_WIN_TIMESTAMP_URL || 'http://timestamp.digicert.com';
+const storeIdentityName = process.env.BAIAGENT_STORE_IDENTITY_NAME?.trim();
+const storePublisher = process.env.BAIAGENT_STORE_PUBLISHER?.trim();
 
+if (store && (signed || enterprise)) {
+  throw new Error('Store build cannot be combined with --signed or --enterprise.');
+}
+if (store && (!storeIdentityName || !storePublisher)) {
+  throw new Error('Store build requires BAIAGENT_STORE_IDENTITY_NAME and BAIAGENT_STORE_PUBLISHER copied exactly from Partner Center → Product management → View app identity details.');
+}
+if (storeIdentityName && !/^[a-zA-Z0-9.-]{3,50}$/.test(storeIdentityName)) {
+  throw new Error('BAIAGENT_STORE_IDENTITY_NAME must be 3–50 characters using only letters, digits, dots and hyphens.');
+}
 if (signed && !certificateSubjectName) {
   throw new Error('Signed build requires BAIAGENT_WIN_CERT_SUBJECT with the exact certificate Subject from the Windows certificate store.');
 }
@@ -45,6 +57,12 @@ await build({
         artifactName: 'Balanov-PRO-Enterprise-Setup-Windows-${version}-${arch}.${ext}',
         shortcutName: 'Balanov.PRO Enterprise',
         menuCategory: 'Balanov.PRO',
+      },
+    } : {}),
+    ...(store ? {
+      appx: {
+        identityName: storeIdentityName,
+        publisher: storePublisher,
       },
     } : {}),
     ...(signed ? {

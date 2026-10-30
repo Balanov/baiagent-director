@@ -3,16 +3,18 @@ import net from 'node:net';
 import * as cheerio from 'cheerio';
 import { cleanOfferingName, dedupeOfferings, extractPrice, isUsefulOfferingName, normalizeMarketText, offeringMentioned, verifyMarketItems } from '../shared/market.js';
 import { createBusinessProfile } from '../shared/business.js';
-import { competitorNameFrom, createMarketSearchPlan, isCompetitorCandidate, isCompetitorContent, isRelevantIndustryEvidence, isRelevantMarketNews, relevantMarketQuote } from '../shared/market-plan.js';
+import { competitorNameFrom, createMarketSearchPlan, isCompetitorCandidate, isCompetitorContent, isRelevantCompanyReview, isRelevantIndustryEvidence, isRelevantMarketNews, relevantMarketQuote } from '../shared/market-plan.js';
 import { researchErrorMessage } from '../shared/research-error.js';
 
 const MAX_HTML_BYTES = 3_000_000;
 const MAX_PAGES = 24;
 const MAX_EXTERNAL = 18;
 const USER_AGENT = 'BAIagentDirector/0.8 (public evidence research; +https://baiagent.ru/)';
-const COMMERCIAL_LINK = /catalog|shop|store|product|goods|service|solution|price|pricing|каталог|товар|продукт|услуг|сервис|цен|прайс|стоимост/i;
+const COMMERCIAL_LINK = /catalog|shop|store|product|goods|service|solution|software|platform|system|price|pricing|каталог|товар|продукт|услуг|сервис|программ|систем|цен|прайс|стоимост/i;
 const SECONDARY_LINK = /about|company|contact|о-нас|компан|контакт/i;
 const PROCESS_LINK = /appointment|schedule|prepare|regulation|protocol|запис|расписан|подготовк|напоминан|спецификац|регламент|инструкц|при[её]м/i;
+const EDITORIAL_LINK = /(?:^|\/)(?:blogs?|news|articles?|insights|press-?center|статьи|новости)(?:\/|$)/i;
+const REVIEW_LINK = /(?:^|\/)(?:reviews?|otzyvy|отзывы)(?:\/|$)/i;
 
 export function normalizeCompanyUrl(input) {
   let value = String(input || '').trim();
@@ -91,6 +93,7 @@ function usableImageValue(value) {
   return candidate && !/^(?:data|blob):/i.test(candidate) && !/(?:^|[\/_-])(?:placeholder|no-image|noimage|1x1|spacer|pixel|transparent)(?:[\/_.-]|$)/i.test(candidate) ? candidate : null;
 }
 function absoluteImageUrl(value, base) {
+  if (value === null || value === undefined || value === '') return null;
   const candidate = usableImageValue(value);
   if (!candidate) return null;
   try { return new URL(candidate, base).href; } catch { return null; }
@@ -119,22 +122,193 @@ function pageImageUrl($, base) {
   return null;
 }
 function coveringQuote(text, name, price) {
-  const normalized = normalizeMarketText(text); const nameIndex = normalized.indexOf(normalizeMarketText(name));
-  if (nameIndex < 0) return null;
-  if (!price) return clean(text).slice(nameIndex, nameIndex + Math.max(name.length, 180)).slice(0, 500) || cleanOfferingName(name);
-  const priceIndex = normalized.indexOf(normalizeMarketText(price)); if (priceIndex < 0) return null;
-  const start = Math.min(nameIndex, priceIndex); const end = Math.max(nameIndex + name.length, priceIndex + price.length);
+  const original = clean(text); let normalized = ''; const positions = [];
+  for (let index = 0; index < original.length; index += 1) {
+    const lower = original[index].toLowerCase();
+    for (const character of lower) { normalized += character; positions.push(index); }
+  }
+  const normalizedName = normalizeMarketText(name); const nameIndex = normalized.indexOf(normalizedName);
+  if (nameIndex < 0 || !positions.length) return null;
+  const excerpt = (start, end) => original.slice(positions[start], end > start && positions[end - 1] !== undefined ? positions[end - 1] + 1 : original.length);
+  if (!price) return excerpt(nameIndex, Math.min(normalized.length, nameIndex + Math.max(normalizedName.length, 180))).slice(0, 500) || cleanOfferingName(name);
+  const normalizedPrice = normalizeMarketText(price); const priceIndex = normalized.indexOf(normalizedPrice); if (priceIndex < 0) return null;
+  const start = Math.min(nameIndex, priceIndex); const end = Math.max(nameIndex + normalizedName.length, priceIndex + normalizedPrice.length);
   if (end - start > 1200) return null;
-  return clean(text).slice(start, end);
+  return excerpt(start, end);
+}
+
+function structuredItems($) {
+  const items = [];
+  $('script[type="application/ld+json"]').each((_, element) => {
+    try {
+      const data = JSON.parse($(element).text()); const stack = Array.isArray(data) ? [...data] : [data];
+      while (stack.length) {
+        const item = stack.shift(); if (!item || typeof item !== 'object') continue;
+        items.push(item); if (Array.isArray(item['@graph'])) stack.push(...item['@graph']);
+      }
+    } catch { /* Invalid structured metadata must not break page parsing. */ }
+  });
+  return items;
+}
+function structuredType(item) { const type = item?.['@type']; return Array.isArray(type) ? type.join(' ') : type || ''; }
+function pagePath(url) { try { return decodeURIComponent(new URL(url).pathname); } catch { return ''; } }
+function editorialPage($, url, items) {
+  return /^article$/i.test(clean($('meta[property="og:type"]').attr('content'))) || items.some(item => /(?:^|\s)(?:Article|BlogPosting|NewsArticle)(?:\s|$)/i.test(structuredType(item))) || EDITORIAL_LINK.test(pagePath(url));
+}
+function reviewPage(url) { return REVIEW_LINK.test(pagePath(url)); }
+function searchPage($, url, items) {
+  return /^(?:search|searchresults)$/i.test(clean($('meta[property="og:type"]').attr('content')))
+    || items.some(item => /SearchResultsPage/i.test(structuredType(item)))
+    || /(?:^|\/)search(?:\/|$)/i.test(pagePath(url));
+}
+function pageType($, url, items) { return searchPage($, url, items) ? 'search' : editorialPage($, url, items) ? 'article' : 'webpage'; }
+
+function offeringLink(node, source, name, $) {
+  const expected = normalizeMarketText(name); const candidates = [];
+  const anchors = [...node.closest('a[href]').get(), ...node.find('a[href]').get()];
+  [...new Set(anchors)].forEach(element => {
+    const anchor = $(element); let linked;
+    try { linked = new URL(anchor.attr('href'), source.url); } catch { return; }
+    if (!['http:', 'https:'].includes(linked.protocol) || linked.hostname !== new URL(source.url).hostname) return;
+    const text = cleanOfferingName(elementText(anchor, $) || anchor.find('img').first().attr('alt') || '');
+    if (!isUsefulOfferingName(text)) return;
+    const normalized = normalizeMarketText(text);
+    const exact = normalized === expected;
+    const containsName = expected.length >= 4 && normalized.includes(expected);
+    const shorterCanonical = normalized.length >= 4 && expected.includes(normalized) && (normalized.length >= expected.length * 0.5 || normalized.split(' ').length >= 2);
+    if (exact || containsName || shorterCanonical) candidates.push({ url: linked.href, name: text.length <= clean(name).length ? text : cleanOfferingName(name), score: exact ? 0 : Math.abs(normalized.length - expected.length) + 1 });
+  });
+  return candidates.sort((a, b) => a.score - b.score)[0] || null;
+}
+
+const GENERIC_OFFERING_PATHS = new Set(['software', 'product', 'products', 'service', 'services', 'solution', 'solutions', 'platform', 'ecosystem', 'enterprise', 'b2b', 'b2c', 'menu', 'catalog', 'catalogue', 'category', 'categories', 'store', 'collection', 'collections', 'dev', 'business', 'academic', 'resources', 'resource', 'library', 'learning', 'curriculum']);
+function pathProductHints(url) {
+  return pagePath(url).split('/').filter(Boolean).reverse()
+    .map(segment => cleanOfferingName(segment.replace(/[-_+]+/g, ' ')))
+    .filter(hint => hint.length >= 2 && !GENERIC_OFFERING_PATHS.has(hint.toLowerCase()) && !/^[a-z]{2}(?:-[a-z]{2})?$/i.test(hint));
+}
+function pathName(url) { return pathProductHints(url)[0] || ''; }
+function confirmedNameIn(value, hint) {
+  if (!hint) return null;
+  const expression = new RegExp(`(?:^|[^\\p{L}\\p{N}])(${hint.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '[ -]+')})(?=$|[^\\p{L}\\p{N}])`, 'iu');
+  return cleanOfferingName(clean(value).match(expression)?.[1] || '') || null;
+}
+function marketplaceCategories($, source) {
+  const candidates = $('[data-shmid="category_name"],[data-category-name],[itemprop="category"]').map((_, element) => {
+    const name = cleanOfferingName(elementText($(element), $));
+    const container = $(element).parent();
+    const quote = elementText(container, $);
+    if (!isUsefulOfferingName(name) || name.length > 70 || !quote || quote.length > 320) return null;
+    const anchor = $(element).closest('a[href]');
+    let url = source.url;
+    if (anchor.length) {
+      try {
+        const linked = new URL(anchor.attr('href'), source.url);
+        if (linked.hostname === new URL(source.url).hostname && ['http:', 'https:'].includes(linked.protocol)) url = linked.href;
+      } catch { /* The category still has first-party textual evidence. */ }
+    }
+    return { name, displayName: name, variant: '', kind: 'service', price: null, image: imageUrl(container, source.url, $), quote, sourceId: source.id, sourceTitle: source.title, url };
+  }).get().filter(Boolean);
+  const unique = [...new Map(candidates.map(item => [normalizeMarketText(item.name), item])).values()];
+  return unique.length >= 2 ? unique : [];
+}
+function linkedCanonicalOffering(node, source, $) {
+  const anchors = [...node.closest('a[href]').get(), ...node.find('a[href]').get()];
+  for (const element of [...new Set(anchors)]) {
+    const anchor = $(element); let linked;
+    try { linked = new URL(anchor.attr('href'), source.url); } catch { continue; }
+    if (!['http:', 'https:'].includes(linked.protocol) || linked.hostname !== new URL(source.url).hostname || !COMMERCIAL_LINK.test(pagePath(linked.href))) continue;
+    const hint = pathName(linked.href);
+    const evidence = [anchor.attr('aria-label'), anchor.find('img').first().attr('alt'), elementText(anchor, $)].filter(Boolean).join(' ');
+    const name = confirmedNameIn(evidence, hint);
+    if (name && isUsefulOfferingName(name)) return { name, url: linked.href };
+  }
+  return null;
+}
+function pageCanonicalOffering($, source, structured) {
+  const samePage = item => {
+    if (!item?.url) return true;
+    try { const linked = new URL(item.url, source.url); return linked.hostname === new URL(source.url).hostname && pagePath(linked.href) === pagePath(source.url); } catch { return false; }
+  };
+  for (const item of structured) {
+    if (!/Product|Service|SoftwareApplication/i.test(structuredType(item)) || !samePage(item)) continue;
+    const name = cleanOfferingName(item.name || '');
+    const confirmed = confirmedNameIn(`${source.text || ''} ${$('title').first().text()}`, name);
+    if (confirmed && isUsefulOfferingName(name) && name.length <= 80) return name;
+  }
+  const terminalSegment = pagePath(source.url).split('/').filter(Boolean).at(-1) || '';
+  if (['academic', 'resources', 'resource', 'library', 'asset-library', 'learning', 'curriculum'].includes(terminalSegment)) return null;
+  // A marketing H1 often hides the actual product. Prefer a short, confirmed
+  // product name in page metadata before interpreting a generic URL segment.
+  const metadata = [
+    $('meta[property="og:title"]').attr('content'),
+    $('meta[property="og:description"]').attr('content'),
+    $('meta[name="description"]').attr('content'),
+    $('title').first().text(),
+    clean(source.text).slice(0, 600),
+  ].filter(Boolean).join(' ');
+  const marketingLead = /^(?:turn|start|meet|reach|transform|help|unite|optimize|deliver|ship|build|plan|gain|connect|driving|drive|collaborate|move|harness|measure|align|усили|созда|управл|начни|попроб|открой|больше|вс[её]\s+для)\b/i;
+  const usefulTitle = value => {
+    const title = cleanOfferingName(String(value || '').split(/[|—–:]/)[0]);
+    return title.length <= 52 && title.split(' ').length <= 5 && !marketingLead.test(title) && !/[.!?]/.test(title)
+      && isUsefulOfferingName(title) && confirmedNameIn(source.text, title) ? title : null;
+  };
+  const namedTitle = usefulTitle($('meta[property="og:title"]').attr('content')) || usefulTitle($('title').first().text());
+  if (namedTitle) return namedTitle;
+  const hints = pathProductHints(source.url);
+  for (const hint of hints) {
+    const byPath = confirmedNameIn(metadata, hint);
+    if (byPath && isUsefulOfferingName(byPath)) return byPath;
+  }
+  if (!hints.length) return null;
+  return usefulTitle($('h1').first().text());
+}
+function unresolvedMarketingName(name, price) { return !price && (clean(name).length > 80 || (clean(name).split(' ').length >= 10 && /[.!?]$/.test(clean(name)))); }
+function marketingOfferingName(name, price) {
+  const value = clean(name);
+  if (price) return false;
+  return value.length > 64 || value.split(/\s+/).length > 7
+    || (/[.!?]/.test(value) && value.split(/\s+/).length >= 3)
+    || /,\s*(?:powered|built|designed)\s+by\b/i.test(value)
+    || /^(?:turn|start|meet|reach|transform|help|unite|optimize|deliver|ship|build|plan|gain|connect|driving|drive|collaborate|move|harness|measure|align|усили|созда|управл|начни|попроб|открой|больше|вс[её]\s+для)\b/i.test(value);
+}
+
+function cardPrice(node, text, $) {
+  for (const selector of ['[itemprop="price"]', '[class*="price-current"]', '[class*="price-new"]', '[class*="actual-price"]']) {
+    const priceNode = node.find(selector).first(); if (!priceNode.length) continue;
+    const price = extractPrice(`${priceNode.text()} ${priceNode.attr('content') || ''}`); if (price) return price;
+  }
+  const fromText = extractPrice(text); if (fromText) return fromText;
+  const generic = node.find('[class*="price"],[class*="cost"]').first();
+  return extractPrice(generic.text());
+}
+
+function commercialCardElement(element) {
+  const className = typeof element?.attribs?.class === 'string' ? element.attribs.class : '';
+  return !/(?:product-card|product-item|product__item|category__item|catalog-item|catalog__item|service-card|service-item|goods-item|price-item|card-content|main-card)__/.test(className);
 }
 
 export function extractOfferings($, source, bodyText) {
+  if (reviewPage(source.url)) return [];
+  const structured = source.structuredData || structuredItems($); const editorial = source.editorial ?? editorialPage($, source.url, structured);
+  const explicitStructured = source.structuredOffering || $('[itemtype*="Product"],[itemtype*="Service"]').length > 0 || structured.some(item => /Product|Service|SoftwareApplication/i.test(structuredType(item)));
   const found = [];
-  const selector = '[itemtype*="Product"],[itemtype*="Service"],[class*="product-card"],[class*="product-item"],[class*="product__item"],[class*="category__item"],[class*="catalog-item"],[class*="catalog__item"],[class*="service-card"],[class*="service-item"],[class*="goods-item"],[class*="price-item"],[class*="card-content"],[class*="main-card"],article';
-  $(selector).each((_, element) => {
-    if ($(element).find(selector).length) return;
+  const categories = marketplaceCategories($, source);
+  const customerRequestBoard = (clean(source.text).match(/детали\s+задачи|task details/gi) || []).length >= 2;
+  if (customerRequestBoard) return categories;
+  const commercialCardSelector = '[itemtype*="Product"],[itemtype*="Service"],[class*="product-card"],[class*="product-item"],[class*="product__item"],[class*="category__item"],[class*="catalog-item"],[class*="catalog__item"],[class*="service-card"],[class*="service-item"],[class*="goods-item"],[class*="price-item"],[class*="card-content"],[class*="main-card"]';
+  const commercialSelector = `${commercialCardSelector},article`;
+  const path = pagePath(source.url);
+  if (!explicitStructured && /(?:^|\/)(?:ecosystem|partners?|stores?|locations?|pickup-points?|academic|resources?|library|asset-library|learning|curriculum)(?:\/|$)/i.test(path)) return [];
+  const commercialCards = !EDITORIAL_LINK.test(path) && COMMERCIAL_LINK.test(path) && $(commercialCardSelector).filter((_, element) => commercialCardElement(element)).length > 0;
+  if (editorial && !explicitStructured && !commercialCards) return [];
+  const selector = editorial && !commercialCards ? '[itemtype*="Product"],[itemtype*="Service"]' : commercialSelector;
+  $(selector).filter((_, element) => commercialCardElement(element)).each((_, element) => {
+    if ($(element).find(selector).filter((__, child) => commercialCardElement(child)).length) return;
     const node = $(element); const text = elementText(node, $);
-    if (text.length < 3 || text.length > 2400 || (node.is('article') && !extractPrice(text))) return;
+    if (node.closest('[class*="partner" i],[id*="partner" i],[class*="ecosystem" i],[id*="ecosystem" i]').length) return;
+    const commercialArticle = node.closest(commercialCardSelector).length > 0 || COMMERCIAL_LINK.test(clean(node.closest('a[href]').attr('href') || ''));
+    if (text.length < 3 || text.length > 2400 || (node.is('article') && !extractPrice(text) && !commercialArticle)) return;
     let name = '';
     for (const selectorPart of ['[itemprop="name"]', 'h1,h2,h3,h4', '[class*="title"],[class*="name"]']) {
       const candidates = node.find(selectorPart).get().map(child => cleanOfferingName(elementText($(child), $))).filter(isUsefulOfferingName);
@@ -142,14 +316,17 @@ export function extractOfferings($, source, bodyText) {
     }
     if (!name) name = node.find('*').filter((__, child) => $(child).children().length === 0).get().map(child => cleanOfferingName($(child).text())).find(isUsefulOfferingName) || '';
     if (!isUsefulOfferingName(name)) return;
-    const priceNode = node.find('[itemprop="price"],[class*="price-current"],[class*="price-new"],[class*="actual-price"],[class*="price"],[class*="cost"]').first();
-    let price = extractPrice(priceNode.text()) || extractPrice(text); let quote = coveringQuote(text, name, price);
+    let linked = offeringLink(node, source, name, $); if (linked) name = linked.name;
+    const canonicalLink = linkedCanonicalOffering(node, source, $);
+    if (canonicalLink && clean(name).split(' ').length >= 4 && clean(name).length > canonicalLink.name.length * 1.5) { name = canonicalLink.name; linked = canonicalLink; }
+    let price = cardPrice(node, text, $); let quote = coveringQuote(text, name, price);
     if (price && !quote) { price = null; quote = coveringQuote(text, name, null); }
-    if (!quote) return;
+    if (!quote || unresolvedMarketingName(name, price)) return;
     const type = clean(node.attr('itemtype')); const variant = variantFrom(text);
-    found.push({ name, displayName: displayName(name, source.title, text), variant, kind: /Service/i.test(type) || /услуг|service/i.test(source.url) ? 'service' : 'product', price, image: imageUrl(node, source.url, $), quote, sourceId: source.id, sourceTitle: source.title, url: source.url });
+    found.push({ name, displayName: displayName(name, source.title, text), variant, kind: /Service/i.test(type) || /услуг|service/i.test(source.url) ? 'service' : 'product', price, image: imageUrl(node, source.url, $), quote, sourceId: source.id, sourceTitle: source.title, url: linked?.url || source.url, commercialCard: node.is(commercialCardSelector) || node.closest(commercialCardSelector).length > 0 });
   });
-  if (!found.length) {
+  if (!found.length && !editorial) found.push(...categories);
+  if (!found.length && !editorial) {
     $('tr').each((_, element) => {
       const node = $(element);
       const imageLink = node.find('a[href]').filter((__, anchor) => $(anchor).find('img').length > 0).first();
@@ -167,49 +344,88 @@ export function extractOfferings($, source, bodyText) {
     });
   }
   if (found.length === 1 && !found[0].image) found[0].image = source.pageImage || null;
-  if (!found.length) {
-    const name = cleanOfferingName($('h1').first().text());
+  if (!found.length && !editorial) {
+    const heading = $('h1').first(); const name = cleanOfferingName(heading.text());
     const categoryHeading = /^(?:продукция|товары|услуги|сервисы|каталог|новинки|заявка на продукцию|конфигуратор|серийные автомобили|самосвалы|седельные тягачи|бортовые автомобили|автомобили с кму|шасси|газобаллонная техника|спецавтотехника|пассажирский транспорт)$/i.test(name);
-    if (!categoryHeading && isUsefulOfferingName(name) && COMMERCIAL_LINK.test(source.url)) {
-      const quote = coveringQuote(bodyText, name, null);
-      if (quote) found.push({ name, displayName: name, variant: '', kind: /услуг|service/i.test(source.url) ? 'service' : 'product', price: null, image: source.pageImage || null, quote, sourceId: source.id, sourceTitle: source.title, url: source.url });
+    if (!categoryHeading && isUsefulOfferingName(name) && COMMERCIAL_LINK.test(pagePath(source.url))) {
+      let contextText = bodyText; let price = null; let context = heading.parent();
+      for (let depth = 0; depth < 4 && context.length; depth += 1) {
+        const text = elementText(context, $); if (text.length > 2400) break;
+        if (/код\s+товара|артикул|(?:^|\s)sku(?:\s|:|$)/i.test(text) && extractPrice(text)) { contextText = text; price = extractPrice(text); break; }
+        context = context.parent();
+      }
+      let quote = coveringQuote(contextText, name, price);
+      if (price && !quote) { price = null; quote = coveringQuote(bodyText, name, null); }
+      if (quote) found.push({ name, displayName: name, variant: '', kind: /услуг|service/i.test(source.url) ? 'service' : 'product', price, image: source.pageImage || null, quote, sourceId: source.id, sourceTitle: source.title, url: source.url });
     }
   }
-  return dedupeOfferings(found, 60);
+  const canonical = found.length === 1 && COMMERCIAL_LINK.test(path) ? pageCanonicalOffering($, source, structured) : null;
+  const samePage = item => {
+    try { return pagePath(new URL(item.url || source.url, source.url).href) === path; } catch { return true; }
+  };
+  const refined = found.flatMap(item => {
+    if (item.price || !canonical || !samePage(item)) return [item];
+    const quote = coveringQuote(source.text, canonical, null) || coveringQuote(bodyText, canonical, null);
+    return quote ? [{ ...item, name: canonical, displayName: canonical, quote }] : [];
+  });
+  return dedupeOfferings(refined.filter(item => {
+    if (unresolvedMarketingName(item.name, item.price) || marketingOfferingName(item.name, item.price)) return false;
+    if (pathProductHints(item.url || source.url).length > 0 || canonical) return true;
+    if (/(?:^|\/)(?:enterprise|b2b)(?:\/|$)/i.test(path)) return false;
+    return item.commercialCard || explicitStructured;
+  }), 60);
 }
 
 export function parsePage(html, url, id) {
   const $ = cheerio.load(html);
   const title = $('meta[property="og:site_name"]').attr('content') || $('meta[property="og:title"]').attr('content') || $('title').first().text().trim() || new URL(url).hostname;
   const siteName = clean($('meta[property="og:site_name"]').attr('content') || '');
-  let organizationName = '';
-  $('script[type="application/ld+json"]').each((_, element) => {
-    if (organizationName) return;
-    try {
-      const data = JSON.parse($(element).text());
-      const stack = Array.isArray(data) ? [...data] : [data];
-      while (stack.length && !organizationName) {
-        const item = stack.shift();
-        if (!item || typeof item !== 'object') continue;
-        if (Array.isArray(item['@graph'])) stack.push(...item['@graph']);
-        const type = Array.isArray(item['@type']) ? item['@type'].join(' ') : item['@type'];
-        if (/Organization|Corporation|LocalBusiness/i.test(type || '') && typeof item.name === 'string') organizationName = clean(item.name);
-      }
-    } catch { /* Invalid structured metadata must not break page parsing. */ }
-  });
+  const structured = structuredItems($); let organizationName = ''; let structuredLogo = null;
+  const logoValue = value => {
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) return value.map(logoValue).find(Boolean) || null;
+    return value && typeof value === 'object' ? logoValue(value.url || value.contentUrl) : null;
+  };
+  for (const item of structured) {
+    if (!/Organization|Corporation|LocalBusiness/i.test(structuredType(item))) continue;
+    if (!organizationName && typeof item.name === 'string') organizationName = clean(item.name);
+    if (!structuredLogo) structuredLogo = logoValue(item.logo);
+  }
   const description = $('meta[name="description"]').attr('content') || $('meta[property="og:description"]').attr('content') || '';
-  const notPartner = (_, element) => !$(element).closest('[class*="partner" i],[id*="partner" i]').length;
-  const logoNode = $('a[class*="logo" i] img,.logo img').filter(notPartner).first();
-  const headerImage = $('[class*="header"] img,img[class*="logo" i],img[id*="logo" i]').filter(notPartner).first();
+  const warnings = [];
+  const notPartner = (_, element) => !$(element).closest('[class*="partner" i],[id*="partner" i],[class*="client" i],[id*="client" i],[class*="sponsor" i],[id*="sponsor" i]').length;
+  const logoNode = $('img').filter(notPartner).filter((_, element) => {
+    const image = $(element); const marker = [image.attr('class'), image.attr('id'), image.attr('alt'), image.attr('aria-label'), image.attr('src'), image.attr('data-src'), image.closest('a').attr('class')].filter(Boolean).join(' ');
+    const context = [image.parent().attr('class'), image.closest('section,header,div').attr('class')].filter(Boolean).join(' ');
+    const analyticsImage = /(?:^|[./])(?:counter|analytics|tracking)\.|\/counter[./?]/i.test(marker);
+    const promotional = /hero|banner|slider|promo|cover/i.test(`${marker} ${context}`);
+    const productLocal = /product[-_ ]?[-\w]*logo|product[-_ ]?brand/i.test(`${image.attr('class') || ''} ${context}`);
+    return /logo|brand/i.test(marker) && !/partner|client|sponsor/i.test(marker) && !analyticsImage && !promotional && !productLocal;
+  }).first();
   const iconNode = $('link[rel*="icon" i]').first();
-  const logoHref = logoNode.attr('src') || logoNode.attr('data-src') || headerImage.attr('src') || headerImage.attr('data-src') || iconNode.attr('href');
-  let logo = null; try { if (logoHref) logo = new URL(logoHref, url).href; } catch { logo = null; }
+  const structuredLogoUrl = absoluteImageUrl(structuredLogo, url);
+  let logo = structuredLogoUrl && !/hero|banner|slider|promo|cover/i.test(structuredLogoUrl) ? structuredLogoUrl : null;
+  let logoConfidence = logo ? 'structured' : null;
+  if (!logo) { logo = absoluteImageUrl(logoNode.attr('data-src') || logoNode.attr('src'), url); if (logo) logoConfidence = 'markup'; }
+  if (!logo) {
+    logo = absoluteImageUrl(iconNode.attr('href'), url); if (logo) logoConfidence = 'favicon';
+    if (logo) warnings.push('Логотип определён только по favicon; визуальное соответствие бренду не подтверждено.');
+  }
+  if (!logo && $('img').length) warnings.push('Логотип не определён: изображения без явных признаков бренда не используются.');
+  const editorial = editorialPage($, url, structured);
+  const structuredOffering = structured.some(item => /Product|Service|SoftwareApplication/i.test(structuredType(item)));
   const headings = $('h1,h2,h3').map((_, element) => $(element).text().replace(/\s+/g, ' ').trim()).get().filter(Boolean).slice(0, 60);
   const links = $('a[href]').map((_, element) => ({ href: $(element).attr('href'), text: clean($(element).text()) })).get();
+  const challengeMarkup = /servicepipe\.tech|<js-challenge-loader|js[-_ ]challenge|checking your browser|проверка браузера|cf-chl|__cf_chl|ddos-?guard|enable javascript|включите javascript/i.test(html);
   $('script,style,noscript,svg,canvas,iframe,nav,footer,form,s,[aria-hidden="true"]').remove();
-  const bodyText = clean($('body').text());
-  const source = { id, kind: 'company-site', url, title: clean(title).slice(0, 200), siteName, organizationName, logo, pageImage: pageImageUrl($, url), contentOrigin: 'full-page', text: [description, headings.join('. '), bodyText].filter(Boolean).join('. ').replace(/\s+/g, ' ').slice(0, 32000), links, retrievedAt: new Date().toISOString() };
-  source.offerings = extractOfferings($, source, bodyText);
+  // Preserve block and inline-element boundaries: fused words otherwise hide
+  // product names, distort quotes and make source evidence hard to verify.
+  const bodyText = elementText($('body'), $);
+  const emptyShell = bodyText.length < 20; const accessIssue = challengeMarkup && bodyText.length < 400 ? 'javascript-challenge' : emptyShell ? 'empty-shell' : null;
+  if (accessIssue === 'javascript-challenge') warnings.push('Сайт вернул JavaScript-challenge: содержимое страницы недоступно без браузерной проверки.');
+  else if (accessIssue === 'empty-shell') warnings.push('Страница не содержит доступного текста: содержимое сайта не было получено.');
+  const source = { id, kind: 'company-site', url, title: clean(title).slice(0, 200), siteName, organizationName, logo, logoConfidence, logoUncertainty: logoConfidence === 'favicon', pageType: pageType($, url, structured), pageImage: pageImageUrl($, url), contentOrigin: 'full-page', text: [description, headings.join('. '), bodyText].filter(Boolean).join('. ').replace(/\s+/g, ' ').slice(0, 32000), links, warnings: [...new Set(warnings)], accessIssue, retrievedAt: new Date().toISOString() };
+  source.offerings = accessIssue === 'javascript-challenge' ? [] : extractOfferings($, { ...source, editorial, structuredOffering, structuredData: structured }, bodyText);
   return source;
 }
 
@@ -223,22 +439,48 @@ const BRAND_TRANSLITERATION = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е:
 function romanizeBrand(value) { return clean(value).toLowerCase().replace(/[а-яё]/g, letter => BRAND_TRANSLITERATION[letter]).replace(/[^a-z0-9]+/g, ''); }
 function quotedBrand(source, brand) {
   const hostnameBrand = romanizeBrand(brand);
+  if (hostnameBrand.length < 3) return null;
+  const confirmsHostname = candidate => {
+    const name = clean(candidate).toLowerCase();
+    return !name.startsWith(`${brand.toLowerCase()}.`) && romanizeBrand(candidate).includes(hostnameBrand);
+  };
   for (const value of [source?.organizationName, source?.siteName, source?.title]) {
     const match = clean(value).match(/[«"'“]([^»"'”]{2,80})[»"'”]/);
-    if (match && hostnameBrand.length >= 3 && romanizeBrand(match[1]).includes(hostnameBrand)) return clean(match[1]);
+    if (match && confirmsHostname(match[1])) return clean(match[1]);
+  }
+  // A descriptive first sentence can identify the brand more reliably than a
+  // slogan in the title. Accept it only when the requested hostname confirms it.
+  const lead = clean(source?.text).slice(0, 600);
+  const match = lead.match(/(?:^|[.!?]\s*)([\p{L}\p{N}][\p{L}\p{N} .-]{1,58}?)\s+[—–-]\s+(?:сервис|платформа|маркетплейс|компания|разработчик|производитель|official|company)(?=$|[^\p{L}\p{N}])/iu);
+  return match && confirmsHostname(match[1]) ? clean(match[1]) : null;
+}
+function hostnameConfirmedBrand(value, brand) {
+  const candidate = clean(value).replace(/^(?:ООО|АО|ПАО|ЗАО|ИП|ОАО)\s+/i, '').replace(/^[«“”"']|[»“”"']$/g, '').trim();
+  const hostnameBrand = romanizeBrand(brand); const candidateBrand = romanizeBrand(candidate);
+  if (candidate.length < 3 || candidate.length > 70 || candidate.split(/\s+/).length > 5 || genericCompanyName(candidate)
+    || /^(?:www\.)?[\w.-]+\.[a-z]{2,}$/i.test(candidate)
+    || /^(?:официальн|главная|контакты|о\s+компании|новости|каталог|выбирайте|добро\s+пожаловать)/i.test(candidate)) return null;
+  if (candidateBrand.length < 3 || hostnameBrand.length < 3) return null;
+  return candidateBrand === hostnameBrand || candidateBrand.includes(hostnameBrand) || (candidateBrand.length >= 4 && hostnameBrand.includes(candidateBrand)) ? candidate : null;
+}
+function titleBrand(source, brand) {
+  for (const part of clean(source?.title).split(/[|—–·:\\]|\s+-\s+/)) {
+    const candidate = hostnameConfirmedBrand(part, brand);
+    if (candidate) return candidate;
   }
   return null;
 }
 export function companyNameFrom(source, requestedUrl) {
   const { hostname, brand } = siteIdentity(requestedUrl);
   const brandName = brand.length <= 5 && /^[a-z0-9-]+$/i.test(brand) ? brand.toUpperCase() : brand;
-  const confirmedBrand = quotedBrand(source, brand);
+  if (source?.kind && !['company-site', 'local-document'].includes(source.kind)) return brandName;
+  const confirmedBrand = quotedBrand(source, brand) || hostnameConfirmedBrand(clean(source?.organizationName).split(/[|—–·:\\]/)[0], brand) || titleBrand(source, brand);
   if (confirmedBrand) return confirmedBrand;
   const structured = clean(source?.organizationName || source?.siteName || '').split(/[|—–·:]/)[0].trim();
   if (structured.length >= 3 && !genericCompanyName(structured)) return structured;
   const cleaned = source?.title?.split(/[|—–·:]/)[0]?.trim();
   const hostnameTitle = /^(?:www\.)?[\w.-]+\.[a-z]{2,}$/i.test(cleaned || '') || cleaned?.toLowerCase() === hostname;
-  const slogan = /^(?:защитные решения|решения для|продукты для|услуги для|все для|всё для|техника для|товары для|мир |будущее |лидер )/i.test(cleaned || '');
+  const slogan = /^(?:защитные решения|решения для|продукты для|услуги для|все для|всё для|техника для|товары для|мир |будущее |лидер |выбирайте )/i.test(cleaned || '');
   const suffix = source?.title?.includes('|') ? clean(source.title.split('|').at(-1)) : '';
   if (slogan && suffix.length >= 3 && suffix.length <= 80 && !genericCompanyName(suffix)) return suffix;
   if (!cleaned || cleaned.length < 3 || genericCompanyName(cleaned) || hostnameTitle || slogan) return brandName;
@@ -246,11 +488,22 @@ export function companyNameFrom(source, requestedUrl) {
 }
 export function companyNameFromPages(sources, requestedUrl) {
   const { brand } = siteIdentity(requestedUrl);
-  for (const source of sources) {
+  const ownSources = sources.filter(source => !source.kind || source.kind === 'company-site');
+  for (const source of ownSources) {
     const confirmedBrand = quotedBrand(source, brand);
     if (confirmedBrand) return confirmedBrand;
   }
-  return companyNameFrom(sources[0] || {}, requestedUrl);
+  for (const source of ownSources) {
+    const structured = clean(source?.organizationName).split(/[|—–·:\\]/)[0].trim();
+    const confirmedBrand = hostnameConfirmedBrand(structured, brand);
+    if (confirmedBrand) return confirmedBrand;
+    if (structured.length >= 3 && !genericCompanyName(structured)) return structured;
+  }
+  for (const source of ownSources) {
+    const confirmedBrand = titleBrand(source, brand);
+    if (confirmedBrand) return confirmedBrand;
+  }
+  return companyNameFrom(ownSources[0] || {}, requestedUrl);
 }
 function companyTokens(company) { return company.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(token => token.length >= 10 && !['компания', 'общество', 'официальный', 'группа', 'россия'].includes(token)); }
 export function companySearchName(companyName = '') {
@@ -274,7 +527,7 @@ function queueLinks(links, base, depth) {
   return links.map(link => {
     const url = canonicalCandidate(link.href, base); if (!url) return null; const parsed = new URL(url);
     if (!/^https?:$/.test(parsed.protocol) || parsed.hostname !== new URL(base).hostname) return null;
-    if (/\.(?:xlsx?|docx?|pdf|zip|exe|apk|png|jpe?g|svg|webp|mp4)(?:$|\?)/i.test(url) || /login|signin|cart|checkout|личный|войти|корзин/i.test(url)) return null;
+    if (/\.(?:xlsx?|docx?|pdf|zip|exe|apk|png|jpe?g|svg|webp|mp4)(?:$|\?)/i.test(url) || /login|signin|cart|checkout|личный|войти|корзин/i.test(url) || REVIEW_LINK.test(pagePath(url))) return null;
     const commercial = COMMERCIAL_LINK.test(`${url} ${link.text}`); const secondary = SECONDARY_LINK.test(`${url} ${link.text}`); const process = PROCESS_LINK.test(`${url} ${link.text}`);
     if (!commercial && !secondary && !process) return null; return { url, text: clean(link.text), depth, score: process ? 18 : commercial ? 10 : 3 };
   }).filter(Boolean).sort((a, b) => b.score - a.score);
@@ -330,8 +583,9 @@ async function searchNewsWeb(query) {
 }
 
 export function isReviewMaterial(item) {
+  if (['article', 'search'].includes(item?.pageType) || /(?:^|\/)search(?:\/|$)/i.test(pagePath(item?.url || ''))) return false;
   const text = `${item.title || ''} ${item.text || ''}`;
-  if (/отзыв[а-яё]* сотрудник|отзыв[а-яё]* о работодател|работа в |условия труда|зарплат|карьерных возможност/i.test(text)) return false;
+  if (/отзыв(?:ы|ов)?\s+(?:о\s+)?сотрудник|отзыв[а-яё]* о работодател|работа в |условия труда|зарплат|карьерных возможност/i.test(text)) return false;
   if (/аналитик[аи]|продажи бренда|объ[её]м продаж/i.test(text)) return false;
   const reviewHost = /(?:^|\.)(?:irecommend\.ru|otzovik\.com)$/i.test(host(item.url));
   return /отзыв|рейтинг|оценк|review|rating/i.test(text) && (reviewHost || /\d+\s*(?:отзыв|reviews?)|\d[.,]\d\s*(?:из\s*5|оценок|рейтинг|$)|рекоменд|не рекоменд|негативн|положительн|достоинств|недостатк|плюсы|минусы|впечатлен|качество|персонал|доставк|возврат/i.test(text));
@@ -340,6 +594,7 @@ export function isReviewMaterial(item) {
 export async function searchPublicWeb(companyName, siteUrl, offerings, onProgress, companySources = []) {
   const { hostname, baseHostname } = siteIdentity(siteUrl); const found = new Map(); const warnings = [];
   const searchName = companySearchName(companyName);
+  const reviewRelevant = item => isReviewMaterial(item) && isRelevantCompanyReview(item, { companyName, siteUrl, sources: companySources, offerings });
   const add = (item, kind, offeringName = '') => { if (!item.url || found.has(item.url)) return; found.set(item.url, { ...item, id: 'web-pending', kind, offeringName: offeringName || undefined, contentOrigin: 'search-snippet', retrievedAt: new Date().toISOString() }); };
   const companyOwned = url => { try { const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase(); return [hostname, baseHostname].some(owned => host === owned || host.endsWith(`.${owned}`)); } catch { return true; } };
   const companySearches = [
@@ -354,7 +609,7 @@ export async function searchPublicWeb(companyName, siteUrl, offerings, onProgres
       onProgress?.({ stage: 'external', message: search.message });
       for (const item of await searchWeb(search.query)) {
         if (companyOwned(item.url) || !isRelevantSearchResult(item, siteUrl, companyName)) continue;
-        add(item, isReviewMaterial(item) ? 'review-snippet' : 'search-snippet');
+        add(item, reviewRelevant(item) ? 'review-snippet' : 'search-snippet');
       }
       onProgress?.({ stage: 'external', message: `Проверено внешних материалов: ${found.size}` });
     } catch (error) { warnings.push(error.message); }
@@ -371,7 +626,7 @@ export async function searchPublicWeb(companyName, siteUrl, offerings, onProgres
       if (searches++) await pause(900);
       onProgress?.({ stage: 'external', message: 'Ищу клиентский опыт на картах и отзовиках' });
       for (const item of await searchWeb(`"${searchName}" отзывы клиентов Яндекс 2ГИС`)) {
-        if (companyOwned(item.url) || !isRelevantSearchResult(item, siteUrl, companyName) || !isReviewMaterial(item)) continue;
+        if (companyOwned(item.url) || !isRelevantSearchResult(item, siteUrl, companyName) || !reviewRelevant(item)) continue;
         add(item, 'review-snippet');
       }
     } catch (error) { warnings.push(error.message); }
@@ -384,7 +639,8 @@ export async function searchPublicWeb(companyName, siteUrl, offerings, onProgres
       try {
         const page = await fetchPublic(source.url);
         if (/html|xhtml|text\/plain/i.test(page.contentType)) {
-          source.text = parsePage(page.text, page.url, source.id).text;
+          const parsed = parsePage(page.text, page.url, source.id);
+          source.text = parsed.text; source.pageType = parsed.pageType;
           source.contentOrigin = 'full-page';
           source.retrievedAt = new Date().toISOString();
         }
@@ -434,7 +690,7 @@ export async function searchPublicWeb(companyName, siteUrl, offerings, onProgres
         const query = mode === 'reviews' ? `"${name}" отзывы цена` : `"${name}" купить цена аналог`;
         for (const item of await searchWeb(query)) {
           if (companyOwned(item.url) || !offeringMentioned(name, item)) continue;
-          if (mode === 'reviews') { if (isReviewMaterial(item)) add(item, 'review-snippet', name); }
+          if (mode === 'reviews') { if (reviewRelevant(item)) add(item, 'review-snippet', name); }
           else add(item, 'alternative-snippet', name);
         }
       } catch (error) { warnings.push(error.message); }
@@ -443,7 +699,7 @@ export async function searchPublicWeb(companyName, siteUrl, offerings, onProgres
   return { sources: [...found.values()].slice(0, 40), warnings: [...new Set(warnings)], plan };
 }
 
-async function enrichExternal(external, onProgress, siteUrl, plan) {
+async function enrichExternal(external, onProgress, siteUrl, plan, reviewContext) {
   const alternatives = []; const identity = siteIdentity(siteUrl);
   const companyOwned = url => { try { const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase(); return [identity.hostname, identity.baseHostname].some(owned => host === owned || host.endsWith(`.${owned}`)); } catch { return false; } };
   const priority = { 'competitor-candidate': 0, 'review-snippet': 1, 'search-snippet': 2, 'industry-snippet': 3, 'customer-snippet': 4, 'alternative-snippet': 5, 'market-price-snippet': 6, 'news-snippet': 9 };
@@ -462,12 +718,13 @@ async function enrichExternal(external, onProgress, siteUrl, plan) {
         onProgress?.({ stage: 'external', message: `Читаю внешний источник: ${source.title}` });
         const page = await fetchPublic(source.url); if (!/html|xhtml|text\/plain/i.test(page.contentType)) continue;
         if (companyOwned(page.url)) { source.discard = true; continue; }
-        const parsed = parsePage(page.text, page.url, source.id); source.url = page.url;
+        const parsed = parsePage(page.text, page.url, source.id); source.url = page.url; source.pageType = parsed.pageType;
         const readable = parsed.text.length >= 40 && !parsed.text.includes('�') && !/ничего не найдено|проверьте адрес страницы|доступ запрещ[её]н/i.test(parsed.text.slice(0, 1000));
         if (readable) {
           source.text = parsed.text;
           source.contentOrigin = 'full-page';
           source.retrievedAt = new Date().toISOString();
+          if (source.kind === 'review-snippet' && (!isReviewMaterial(source) || !isRelevantCompanyReview(source, reviewContext))) { source.discard = true; continue; }
           if (source.kind === 'competitor-candidate') {
             if (!isCompetitorCandidate(source, plan, siteUrl) || !isCompetitorContent(source.text, plan)) { source.discard = true; continue; }
             source.competitorName = competitorNameFrom(parsed);
@@ -483,12 +740,19 @@ async function enrichExternal(external, onProgress, siteUrl, plan) {
   return alternatives;
 }
 
+export function resolvedResearchWarnings(warnings = [], logoConfidence) {
+  const unique = [...new Set(warnings)];
+  return ['markup', 'structured'].includes(logoConfidence) ? unique.filter(warning => !/favicon/i.test(warning)) : unique;
+}
+
 export async function researchCompany(input, onProgress) {
   const requestedUrl = normalizeCompanyUrl(input); onProgress?.({ stage: 'site', message: 'Открываю сайт и ищу каталог компании' });
   let homepage;
   try { homepage = await fetchPublic(requestedUrl); } catch (error) { throw new Error(researchErrorMessage(error)); }
   if (!/html|xhtml|text\/plain/i.test(homepage.contentType)) throw new Error('По адресу нет читаемой веб-страницы');
-  const first = parsePage(homepage.text, homepage.url, 'site-1'); const companyName = companyNameFrom(first, requestedUrl); let companyLogo = first.logo;
+  const logoRank = confidence => ({ favicon: 1, markup: 2, structured: 3 })[confidence] || 0;
+  const first = parsePage(homepage.text, homepage.url, 'site-1'); const companyName = companyNameFrom(first, requestedUrl); let companyLogo = first.logo; let companyLogoRank = logoRank(first.logoConfidence);
+  const siteWarnings = new Set(first.warnings || []);
   const origin = new URL(homepage.url); const sources = [{ ...first, companyName }]; delete sources[0].links;
   const queued = new Set([origin.href]); const queue = [];
   const enqueue = (links, base, depth) => { for (const candidate of queueLinks(links, base, depth)) { if (queued.has(candidate.url)) continue; queued.add(candidate.url); queue.push(candidate); } queue.sort((a, b) => a.depth - b.depth || b.score - a.score); };
@@ -501,7 +765,10 @@ export async function researchCompany(input, onProgress) {
       onProgress?.({ stage: 'pages', message: candidate.depth === 1 ? `Открываю: ${candidate.text || new URL(candidate.url).pathname}` : `Углубляю поиск по карточкам: ${candidate.text || new URL(candidate.url).pathname}`, url: candidate.url });
       const page = await fetchPublic(candidate.url); if (!/html|xhtml|text\/plain/i.test(page.contentType)) continue;
       const parsed = parsePage(page.text, page.url, `site-${sources.filter(source => source.kind === 'company-site').length + 1}`);
-      if (parsed.text.length > 100) { sources.push({ ...parsed, companyName }); if (!companyLogo && parsed.logo) companyLogo = parsed.logo; }
+      for (const warning of parsed.warnings || []) siteWarnings.add(warning);
+      if (parsed.text.length > 100) sources.push({ ...parsed, companyName });
+      const parsedLogoRank = logoRank(parsed.logoConfidence);
+      if (parsed.logo && parsedLogoRank > companyLogoRank) { companyLogo = parsed.logo; companyLogoRank = parsedLogoRank; }
       if (candidate.depth > 1) deepened = true; if (currentOfferings.length < 8 && candidate.depth < 2) enqueue(parsed.links, page.url, candidate.depth + 1);
       const stored = sources.find(source => source.id === parsed.id); if (stored) delete stored.links;
     } catch { /* A secondary page must not fail the whole research. */ }
@@ -510,10 +777,12 @@ export async function researchCompany(input, onProgress) {
   const resolvedCompanyName = companyNameFromPages(sources, homepage.url);
   sources.forEach(source => { if (source.kind === 'company-site') source.companyName = resolvedCompanyName; });
   const external = await searchPublicWeb(resolvedCompanyName, homepage.url, offerings, onProgress, sources); external.sources.forEach((source, index) => { source.id = `web-${index + 1}`; });
-  const alternativesFromPages = await enrichExternal(external, onProgress, homepage.url, external.plan);
+  const reviewContext = { companyName: resolvedCompanyName, siteUrl: homepage.url, sources, offerings, marketContext: external.plan };
+  const alternativesFromPages = await enrichExternal(external, onProgress, homepage.url, external.plan, reviewContext);
   const companyHost = siteIdentity(homepage.url).baseHostname;
-  external.sources = external.sources.filter(source => !source.discard && !source.title.toLowerCase().includes(companyHost)); sources.push(...external.sources);
-  const reviews = sources.filter(source => source.kind === 'review-snippet').map(source => ({ sourceId: source.id, sourceTitle: source.title, url: source.url, quote: source.text.slice(0, 900), offeringName: source.offeringName || null }));
+  external.sources = external.sources.filter(source => !source.discard && !source.title.toLowerCase().includes(companyHost) && (source.kind !== 'review-snippet' || (isReviewMaterial(source) && isRelevantCompanyReview(source, reviewContext)))); sources.push(...external.sources);
+  if (first.accessIssue || clean(first.text).length < 40) siteWarnings.add('Содержимое главной страницы недоступно; профиль компании опирается на внешние источники, а не на успешный аудит сайта.');
+  const reviews = sources.filter(source => source.kind === 'review-snippet' && isReviewMaterial(source)).map(source => ({ sourceId: source.id, sourceTitle: source.title, url: source.url, quote: source.text.slice(0, 900), offeringName: source.offeringName || null }));
   const competitorHosts = new Set();
   const competitors = sources.filter(source => source.kind === 'competitor-candidate').flatMap(source => {
     const hostname = siteIdentity(source.url).baseHostname;
@@ -525,5 +794,5 @@ export async function researchCompany(input, onProgress) {
   }).slice(0, 12);
   const news = sources.filter(source => source.kind === 'news-snippet').map(source => ({ title: source.title, url: source.url, sourceId: source.id, sourceTitle: source.title, quote: source.text.slice(0, 500), publishedAt: source.publishedAt || null })).slice(0, 8);
   const alternatives = [...alternativesFromPages, ...sources.filter(source => source.kind === 'alternative-snippet').map(source => ({ name: cleanOfferingName(source.title.split(/[|—–]/)[0]), displayName: cleanOfferingName(source.title.split(/[|—–]/)[0]), sourceId: source.id, sourceTitle: source.title, url: source.url, quote: source.text.slice(0, 900), price: extractPrice(source.text), offeringName: source.offeringName || null }))].slice(0, 30);
-  return { requestedUrl: homepage.url, companyName: resolvedCompanyName, companyLogo, sources, offerings, reviews, competitors, news, alternatives, marketContext: { industry: external.plan.industry, subject: external.plan.subject }, coverage: { pages: sources.filter(source => source.kind === 'company-site').length, deepened, external: external.sources.length, firstExternalId: sources.length - external.sources.length }, warnings: external.warnings, createdAt: new Date().toISOString() };
+  return { requestedUrl: homepage.url, companyName: resolvedCompanyName, companyLogo, sources, offerings, reviews, competitors, news, alternatives, marketContext: { industry: external.plan.industry, subject: external.plan.subject }, coverage: { pages: sources.filter(source => source.kind === 'company-site').length, deepened, external: external.sources.length, firstExternalId: sources.length - external.sources.length }, warnings: resolvedResearchWarnings([...siteWarnings, ...external.warnings], companyLogoRank > 1 ? 'markup' : companyLogoRank === 1 ? 'favicon' : null), createdAt: new Date().toISOString() };
 }

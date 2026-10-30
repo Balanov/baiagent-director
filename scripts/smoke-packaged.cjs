@@ -1,15 +1,17 @@
 const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const assert = require('node:assert/strict');
 
 const root = path.resolve(__dirname, '..');
-const output = process.env.BAIAGENT_WINDOWS_OUTPUT || 'release';
+const output = process.env.BAIAGENT_WINDOWS_OUTPUT || 'release-110-node';
 const profile = path.join(root, 'artifacts', `packaged-profile-${output.replace(/\W+/g, '-')}`);
 const executable = path.join(root, output, 'win-unpacked', 'BAIagent Director.exe');
+const evidence = path.join(root, 'validation', 'packaged-110');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function waitForTarget() {
-  for (let attempt = 0; attempt < 80; attempt += 1) {
+  for (let attempt = 0; attempt < 120; attempt += 1) {
     try {
       const targets = await (await fetch('http://127.0.0.1:9225/json/list')).json();
       const page = targets.find(target => target.type === 'page' && target.url.includes('index.html'));
@@ -17,16 +19,19 @@ async function waitForTarget() {
     } catch {}
     await delay(250);
   }
-  throw new Error('Packaged application did not expose its window');
+  throw new Error('Собранное приложение не открыло рабочее окно');
 }
 
 async function main() {
-  // Профиль сохраняется между попытками: прерванная загрузка модели продолжается, а не начинается заново.
   await fs.mkdir(profile, { recursive: true });
-  const env = { ...process.env };
+  await fs.mkdir(evidence, { recursive: true });
+  const env = { ...process.env, BAIAGENT_OLLAMA_MODEL: process.env.BAIAGENT_OLLAMA_MODEL || 'qwen3:8b' };
   delete env.ELECTRON_RUN_AS_NODE;
   const child = spawn(executable, ['--remote-debugging-port=9225', `--user-data-dir=${profile}`], { env, stdio: 'inherit' });
   let socket;
+  const checks = [];
+  const screenshots = [];
+  const activity = new Set();
   try {
     const target = await waitForTarget();
     socket = new WebSocket(target.webSocketDebuggerUrl);
@@ -47,53 +52,89 @@ async function main() {
     });
     const evaluate = async expression => {
       const result = await call('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
-      if (result.exceptionDetails) throw new Error(result.exceptionDetails.text || 'Renderer evaluation failed');
+      if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || 'Ошибка интерфейса');
       return result.result.value;
     };
+    const screenshot = async name => {
+      await call('Page.bringToFront');
+      await evaluate('document.fonts.ready');
+      await delay(1100);
+      await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+      const image = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+      const file = path.join(evidence, `${name}.png`);
+      await fs.writeFile(file, Buffer.from(image.data, 'base64'));
+      screenshots.push(file);
+    };
+    const clickText = async (selector, text) => evaluate(`(() => { const button = [...document.querySelectorAll(${JSON.stringify(selector)})].find(item => item.textContent.includes(${JSON.stringify(text)})); if (!button) throw new Error('Нет кнопки: ' + ${JSON.stringify(text)}); button.click(); })()`);
     await call('Page.enable');
-    for (let attempt = 0; attempt < 40 && !(await evaluate('Boolean(document.querySelector("#company-url"))')); attempt += 1) await delay(250);
-    const desktop = await evaluate('Boolean(window.director?.isDesktop)');
-    if (!desktop) throw new Error('Desktop bridge is unavailable in packaged application');
+    await call('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
+    for (let attempt = 0; attempt < 80 && !(await evaluate('Boolean(document.querySelector("#company-url"))')); attempt += 1) await delay(250);
+    assert.equal(await evaluate('Boolean(window.director?.isDesktop)'), true, 'Локальный мост недоступен');
+    assert.equal(await evaluate('typeof window.director?.advisor'), 'function');
+    checks.push('desktop-bridge');
     await evaluate(`(() => {
       const input = document.querySelector('#company-url');
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'https://baiagent.ru/');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'https://teremok.ru/');
       input.dispatchEvent(new Event('input', { bubbles: true }));
       document.querySelector('.launch-form').requestSubmit();
     })()`);
-    let meta = '';
-    let workingCaptured = false;
-    const activityMessages = new Set();
-    const draftValues = new Set();
-    // 12 минут включают подтверждённую первичную загрузку модели 2,5 ГБ и локальный анализ.
-    for (let attempt = 0; attempt < 2400; attempt += 1) {
+    let mode = '';
+    const deadline = Date.now() + 480000;
+    let lastLog = 0;
+    while (Date.now() < deadline) {
       const state = await evaluate('({ mode: document.querySelector(".result-view")?.dataset.analysisMode || "", error: document.querySelector(".inline-error")?.textContent || "", activity: document.querySelector(".live-activity strong")?.textContent || "", percent: Number(document.querySelector(".progress-track")?.getAttribute("aria-label")?.replace(/\\D/g, "") || 0) })');
-      if (state.activity) activityMessages.add(state.activity);
-      if (state.activity.includes('знаков')) draftValues.add(Number(state.activity.replace(/\D/g, '')));
-      if (state.activity && !workingCaptured && state.percent >= 85) {
-        const working = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
-        await fs.writeFile(path.join(root, 'artifacts', 'ui-v06-packaged-working.png'), Buffer.from(working.data, 'base64'));
-        workingCaptured = true;
-      }
-      if (attempt > 0 && attempt % 200 === 0) console.log(`Packaged analysis still running: ${state.percent}%, ${state.activity}`);
-      if (state.mode.startsWith('qwen')) { meta = `Локальный ИИ-анализ: ${state.mode}`; break; }
-      if (state.mode === 'evidence-rules') throw new Error('Packaged Qwen fell back to evidence rules');
-      if (state.error) throw new Error(`Packaged application error: ${state.error}`);
-      await delay(300);
+      if (state.activity) activity.add(state.activity);
+      if (Date.now() - lastLog > 15000) { console.log('Собранная версия:', JSON.stringify(state)); lastLog = Date.now(); }
+      if (state.mode) { mode = state.mode; break; }
+      if (state.error) throw new Error(state.error);
+      await delay(500);
     }
-    if (!meta) throw new Error('Packaged Qwen analysis timed out');
-    if (!workingCaptured || activityMessages.size < 2 || draftValues.size < 2 || Math.max(...draftValues) <= 0) throw new Error('Real analysis activity was not visibly updated');
+    if (!mode) throw new Error('Исследование собранной версии не завершилось за отведённое время');
+    if (!mode.startsWith('qwen')) throw new Error(`Вместо локальной модели сработал резервный алгоритм: ${mode}`);
+    checks.push(`real-analysis:${mode}`);
+    assert.ok(activity.size >= 2, 'Не показаны фактические этапы исследования');
+    await screenshot('audit');
     const contract = await evaluate(`({
+      company: document.querySelector('.audit-company-name h1')?.textContent || '',
       offerings: document.querySelectorAll('.offering-card').length,
-      categories: document.querySelectorAll('.opportunity-categories button').length,
-      agentsHidden: !document.querySelector('.agent-solution'),
-      drawerHidden: !document.querySelector('.evidence-drawer'),
-      horizontalOverflow: document.documentElement.scrollWidth > window.innerWidth,
-      verticalScroll: document.documentElement.scrollHeight > window.innerHeight
+      images: [...document.querySelectorAll('.offering-card img')].map(img=>({src:img.currentSrc,loaded:img.complete&&img.naturalWidth>0})),
+      opportunities: document.querySelectorAll('.direction-card').length,
+      advisor: document.querySelector('.advisor-status')?.textContent || '',
+      overflow: document.documentElement.scrollWidth > innerWidth
     })`);
-    if (contract.offerings < 4 || contract.categories !== 3 || !contract.agentsHidden || !contract.drawerHidden || contract.horizontalOverflow) throw new Error(`Packaged result contract failed: ${JSON.stringify(contract)}`);
-    const screenshot = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
-    await fs.writeFile(path.join(root, 'artifacts', 'ui-v06-packaged-result.png'), Buffer.from(screenshot.data, 'base64'));
-    console.log(`Packaged smoke passed: ${meta}; ${JSON.stringify(contract)}`);
+    assert.ok(contract.company.length > 1 && contract.offerings >= 4, JSON.stringify(contract));
+    assert.ok(contract.images.every(image => image.loaded), 'Часть изображений не загрузилась');
+    assert.equal(contract.overflow, false);
+    checks.push('audit-and-images');
+
+    await evaluate(`(() => { const input = document.querySelector('.advisor-input input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'Что вы поняли о моём бизнесе? Назовите конкретные предложения.'); input.dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('.advisor-input').requestSubmit(); })()`);
+    const chatDeadline = Date.now() + 300000;
+    let chat;
+    while (Date.now() < chatDeadline) {
+      chat = await evaluate(`({busy:Boolean(document.querySelector('.advisor-thinking')),text:document.querySelector('.advisor-message.is-advisor:last-of-type')?.textContent||'',citations:document.querySelectorAll('.message-citations button').length})`);
+      if (!chat.busy && chat.text) break;
+      await delay(1000);
+    }
+    console.log('LOCAL_CHAT', JSON.stringify(chat));
+    await fs.writeFile(path.join(evidence, 'last-chat.json'), JSON.stringify(chat, null, 2));
+    await screenshot('local-chat');
+    assert.ok(chat.text && !chat.busy && !/Не смог завершить/.test(chat.text), `Диалог: ${JSON.stringify(chat)}`);
+    assert.ok(chat.citations > 0, 'Локальный советник не вернул проверяемых источников');
+    checks.push('real-local-chat-with-citations');
+    await screenshot('local-chat');
+    await clickText('.advisor-step-actions button', 'Перейти к гипотезам');
+    await clickText('.rail-navigation button', 'Выбор');
+    await evaluate(`document.querySelectorAll('.direction-card')[1]?.click()`);
+    await clickText('.rail-navigation button', 'План');
+    assert.ok(await evaluate(`document.querySelectorAll('.plan-step-list > *').length > 0`));
+    await clickText('.rail-navigation button', 'Пилот');
+    assert.match(await evaluate(`document.querySelector('.advisor-step-actions')?.textContent || ''`), /Подключить 0 руб\./);
+    checks.push('direction-plan-pilot');
+    await screenshot('pilot');
+    const report = { status: 'passed', checkedAt: new Date().toISOString(), version: '1.1.0', output, mode, chat, contract, checks, activity: [...activity], screenshots, limitation: 'Проверен путь локальной модели через Ollama. Встроенная GGUF-модель и подпись установщика проверяются отдельно.' };
+    await fs.writeFile(path.join(evidence, 'verification.json'), JSON.stringify(report, null, 2));
+    console.log('PACKAGED_SMOKE_PASSED', JSON.stringify({ mode, checks }));
   } finally {
     if (socket) socket.close();
     if (child.pid) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });

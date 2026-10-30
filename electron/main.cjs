@@ -46,20 +46,26 @@ app.whenReady().then(() => {
     const current = sessions.get(event.sender.id);
     if (!current) throw new Error('Сначала запустите исследование сайта');
     const picked = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'], filters: [{ name: 'Документы', extensions: ['txt', 'md', 'csv', 'json', 'pdf', 'docx'] }] });
-    if (picked.canceled || !picked.filePaths.length) return current;
+    if (picked.canceled || !picked.filePaths.length) return { status: 'canceled' };
     const { readLocalDocuments } = await import('./files.mjs');
     const documents = await readLocalDocuments(picked.filePaths);
+    if (!documents.length) throw new Error('Не удалось извлечь текст из выбранных документов');
     const existing = new Set(current.research.sources.map(source => source.url));
     const additions = documents.filter(document => !existing.has(document.url));
+    if (!additions.length) return { status: 'completed', result: current, addedCount: 0 };
     const firstId = current.research.sources.filter(source => source.kind === 'local-document').length + 1;
-    current.research.sources.push(...additions.map((document, index) => ({ ...document, id: `local-${firstId + index}` })));
-    return analyzeFor(event, current.research);
+    const research = {
+      ...current.research,
+      sources: [...current.research.sources, ...additions.map((document, index) => ({ ...document, id: `local-${firstId + index}` }))],
+    };
+    const result = await analyzeFor(event, research);
+    return { status: 'completed', result, addedCount: additions.length };
   });
   ipcMain.handle('director:add-folder', async event => {
     const current = sessions.get(event.sender.id);
     if (!current) throw new Error('Сначала запустите исследование сайта');
     const picked = await dialog.showOpenDialog({ title: 'Выберите рабочую папку', buttonLabel: 'Проверить папку', properties: ['openDirectory'] });
-    if (picked.canceled || !picked.filePaths.length) return current;
+    if (picked.canceled || !picked.filePaths.length) return { status: 'canceled' };
     event.sender.send('director:progress', { stage: 'pages', message: 'Считаю документы только в выбранной папке' });
     const { scanLocalFolder, readLocalDocuments } = await import('./files.mjs');
     const scan = await scanLocalFolder(picked.filePaths[0]);
@@ -71,19 +77,28 @@ app.whenReady().then(() => {
       detail: `${scan.root}\n\nПрограмма прочитает до ${scan.filePaths.length} самых свежих файлов. Только эта папка, только чтение, без отправки документов в облачную модель.`,
       buttons: ['Отмена', 'Разрешить и изучить'], defaultId: 0, cancelId: 0, noLink: true,
     });
-    if (confirmation.response !== 1) return current;
+    if (confirmation.response !== 1) return { status: 'canceled' };
     event.sender.send('director:progress', { stage: 'pages', message: `Читаю ${scan.filePaths.length} документов из разрешённой папки` });
     const documents = await readLocalDocuments(scan.filePaths);
     if (!documents.length) throw new Error('Не удалось извлечь текст из выбранных документов');
-    current.research.sources = current.research.sources.filter(source => source.kind !== 'local-document');
-    current.research.sources.push(...documents.map((document, index) => ({ ...document, id: `local-${index + 1}` })));
-    return analyzeFor(event, current.research);
+    const research = {
+      ...current.research,
+      sources: [
+        ...current.research.sources.filter(source => source.kind !== 'local-document'),
+        ...documents.map((document, index) => ({ ...document, id: `local-${index + 1}` })),
+      ],
+    };
+    const result = await analyzeFor(event, research);
+    return { status: 'completed', result, addedCount: documents.length };
   });
   ipcMain.handle('director:forget-folder', async event => {
     const current = sessions.get(event.sender.id);
     if (!current) throw new Error('Нет данных исследования');
-    current.research.sources = current.research.sources.filter(source => source.kind !== 'local-document');
-    return analyzeFor(event, current.research);
+    const sources = current.research.sources.filter(source => source.kind !== 'local-document');
+    const removedCount = current.research.sources.length - sources.length;
+    if (!removedCount) return { status: 'completed', result: current, removedCount: 0 };
+    const result = await analyzeFor(event, { ...current.research, sources });
+    return { status: 'completed', result, removedCount };
   });
   ipcMain.handle('director:advisor', async (event, payload = {}) => {
     const current = sessions.get(event.sender.id);
@@ -95,16 +110,21 @@ app.whenReady().then(() => {
     const { chatWithQwen } = await import('./qwen.mjs');
     return chatWithQwen({ question, history, research: current.research, analysis: current.analysis, opportunity, userDataPath: app.getPath('userData') });
   });
+  ipcMain.handle('director:reset-session', event => {
+    sessions.delete(event.sender.id);
+    return { status: 'completed' };
+  });
   ipcMain.handle('director:save-pilot', async (event, opportunityId) => {
     const current = sessions.get(event.sender.id);
     if (!current) throw new Error('Нет данных исследования');
     const opportunity = current.analysis.opportunities.find(item => item.id === opportunityId);
+    if (!opportunity) throw new Error('Выбранное направление больше недоступно');
     const { buildPilotPlan } = await import('../shared/verification.js');
     const content = buildPilotPlan(current.analysis, opportunity, current.research.sources);
     const picked = await dialog.showSaveDialog({ title: 'Сохранить план пилота', defaultPath: 'BAIagent-pilot.md', filters: [{ name: 'Markdown', extensions: ['md'] }] });
-    if (picked.canceled || !picked.filePath) return { saved: false };
+    if (picked.canceled || !picked.filePath) return { status: 'canceled', saved: false };
     await fs.writeFile(picked.filePath, content, 'utf8');
-    return { saved: true, path: picked.filePath };
+    return { status: 'completed', saved: true, path: picked.filePath };
   });
   ipcMain.handle('director:open-external', async (_event, url) => {
     if (!/^https:\/\//.test(url)) throw new Error('Разрешены только HTTPS-ссылки');

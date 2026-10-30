@@ -1,7 +1,8 @@
 import path from 'node:path';
 import { ANALYSIS_SCHEMA, parseModelJson, verifyAnalysis } from '../shared/verification.js';
 import { createEvidenceBasedFallback, enrichAnalysisWithAudit } from '../shared/fallback.js';
-import { ADVISOR_SYSTEM_PROMPT, advisorPrompt, parseAdvisorResponse } from './advisor-context.mjs';
+import { ADVISOR_SYSTEM_PROMPT, ADVISOR_RESPONSE_SCHEMA, advisorPrompt, advisorRequiresEvidence, modelAnswerHasUnsupportedSpecifics, parseAdvisorResponse } from './advisor-context.mjs';
+import { answerAdvisor } from '../shared/advisor.js';
 
 export const MODEL_URI = 'hf:Qwen/Qwen3-4B-GGUF:Q4_K_M';
 export const SYSTEM_PROMPT = `Ты — локальный управленческий советник BAIagent Director уровня стратегического консультанта и коммерческого директора. Работаешь только с исследованием компании, внешнего рынка и разрешёнными документами.
@@ -31,6 +32,8 @@ async function detectOllama() {
     if (!response.ok) return null;
     const data = await response.json();
     const models = (data.models || []).map(item => item.name).filter(name => /qwen/i.test(name) && !/vl|vision|embedding/i.test(name));
+    const preferred = process.env.BAIAGENT_OLLAMA_MODEL?.trim();
+    if (preferred) return models.includes(preferred) ? preferred : null;
     return models.sort((a, b) => Number(/qwen3/i.test(b)) - Number(/qwen3/i.test(a)) || b.length - a.length)[0] || null;
   } catch { return null; } finally { clearTimeout(timer); }
 }
@@ -185,36 +188,50 @@ export async function analyzeWithQwen(research, { userDataPath, onProgress }) {
 
 export async function chatWithQwen({ question, history, research, analysis, opportunity, userDataPath }) {
   const prompt = advisorPrompt({ question, history, research, analysis, opportunity });
-  let raw = '';
-  let mode = '';
   const ollamaModel = await detectOllama();
-  if (ollamaModel) {
-    const response = await fetch('http://127.0.0.1:11434/api/chat', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: ollamaModel, messages: [{ role: 'system', content: ADVISOR_SYSTEM_PROMPT }, { role: 'user', content: prompt }], stream: false, think: false, options: { temperature: 0.35, num_predict: 700 } }),
-    });
-    if (!response.ok) throw new Error(`Ollama chat HTTP ${response.status}`);
-    const data = await response.json();
-    raw = data.message?.content || data.response || '';
-    mode = `qwen-ollama:${ollamaModel}`;
-  } else {
-    const { context, LlamaChatSession } = await embeddedSession(userDataPath);
-    const { QwenChatWrapper } = await import('node-llama-cpp');
-    const session = new LlamaChatSession({
-      contextSequence: context.getSequence(), systemPrompt: ADVISOR_SYSTEM_PROMPT, autoDisposeSequence: true,
-      chatWrapper: new QwenChatWrapper({ thoughts: 'discourage' }),
-    });
-    try {
-      raw = await session.prompt(`${prompt}\n/no_think`, {
-        temperature: 0.2, maxTokens: 700, responsePrefix: '</think>\n\n',
-        repeatPenalty: { penalty: 1.12, lastTokens: 256 },
+  const mode = ollamaModel ? `qwen-ollama:${ollamaModel}` : 'qwen-embedded';
+  const needsEvidence = advisorRequiresEvidence(question);
+  let lastParsed = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const instruction = attempt ? '\nПредыдущий ответ не прошёл проверку. Ответь коротко только фактами компании. Каждый citations[].quote обязан быть дословным непрерывным фрагментом text источника с указанным sourceId. Не добавляй услуги и возможности без такой цитаты.' : '';
+    let raw = '';
+    if (ollamaModel) {
+      const response = await fetch('http://127.0.0.1:11434/api/chat', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: ollamaModel, messages: [{ role: 'system', content: ADVISOR_SYSTEM_PROMPT }, { role: 'user', content: prompt + instruction }],
+          stream: false, think: false, format: ADVISOR_RESPONSE_SCHEMA, options: { temperature: attempt ? 0 : 0.15, num_predict: 900 },
+        }),
       });
-    } finally {
-      session.dispose();
+      if (!response.ok) throw new Error(`Ollama chat HTTP ${response.status}`);
+      const data = await response.json();
+      raw = data.message?.content || data.response || '';
+    } else {
+      const { context, LlamaChatSession } = await embeddedSession(userDataPath);
+      const { QwenChatWrapper } = await import('node-llama-cpp');
+      const session = new LlamaChatSession({
+        contextSequence: context.getSequence(), systemPrompt: ADVISOR_SYSTEM_PROMPT, autoDisposeSequence: true,
+        chatWrapper: new QwenChatWrapper({ thoughts: 'discourage' }),
+      });
+      try {
+        raw = await session.prompt(`${prompt}${instruction}\n/no_think`, {
+          temperature: attempt ? 0 : 0.15, maxTokens: 900, responsePrefix: '</think>\n\n',
+          repeatPenalty: { penalty: 1.12, lastTokens: 256 },
+        });
+      } finally {
+        session.dispose();
+      }
     }
-    mode = 'qwen-embedded';
+    const parsed = parseAdvisorResponse(raw, research, opportunity, question);
+    lastParsed = parsed;
+    if (parsed.answer && !modelAnswerHasUnsupportedSpecifics(parsed) && (!needsEvidence || parsed.citations.length)) return { ...parsed, mode };
   }
-  const parsed = parseAdvisorResponse(raw, research, opportunity, question);
-  if (!parsed.answer) throw new Error('Локальная модель вернула пустой ответ');
-  return { ...parsed, mode };
+  const verified = answerAdvisor(question, research, analysis, opportunity);
+  return {
+    ...verified,
+    mode: 'evidence-navigator',
+    notice: lastParsed?.answer
+      ? 'Ответ модели не прошёл сверку цитат. Показываю только проверяемые данные из исследования.'
+      : 'Модель не вернула корректный ответ с источниками. Показываю только проверяемые данные из исследования.',
+  };
 }

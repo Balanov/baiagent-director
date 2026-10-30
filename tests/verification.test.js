@@ -38,7 +38,7 @@ describe('evidence verification', () => {
     expect(verifyAnalysis({ opportunities: [fake] }, sources).opportunities).toHaveLength(0);
   });
   it('does not treat digits inside a verified brand name as a numeric business claim', () => {
-    const branded = { ...opportunity, title: 'Сравнить предложение с 100yuristov' };
+    const branded = { ...opportunity, title: 'Ускорить ответы о 100yuristov' };
     expect(verifyAnalysis({ opportunities: [branded] }, sources).opportunities).toHaveLength(1);
   });
   it('keeps the researched company name instead of a model-invented name', () => {
@@ -120,7 +120,7 @@ describe('fallback and URL handling', () => {
 
 describe('director evidence map and conversion', () => {
   it('accepts a sourced SWOT hypothesis and rejects a fabricated one', () => {
-    const valid = { category: 'strength', title: 'Есть собственное производство', evidence: opportunity.evidence };
+    const valid = { category: 'strength', title: 'Есть собственное производство', evidence: [{ sourceId: 'site-1', quote: 'Мы производим мебель.' }] };
     const result = verifyAnalysis({ opportunities: [opportunity], swot: [valid] }, sources);
     expect(result.swot).toHaveLength(1);
     expect(result.swot[0].status).toBe('hypothesis');
@@ -167,7 +167,8 @@ describe('director evidence map and conversion', () => {
     const valid = verifyMarketItems([{ name: 'Кресло «Атлант»', price: null, quote: 'Кресло «Атлант»', sourceId: 'site-1' }], marketSources);
     expect(valid[0].price).toBeNull();
     const wrong = verifyMarketItems([{ name: 'Кресло «Атлант»', price: '45 000 ₽', quote: 'Кресло «Атлант»', sourceId: 'site-1' }], marketSources);
-    expect(wrong).toHaveLength(0);
+    expect(wrong).toHaveLength(1);
+    expect(wrong[0].price).toBeNull();
   });
   it('deduplicates repeated offering cards and recognizes currency', () => {
     expect(extractPrice('Стоимость: от 1 250 000 ₽ за проект')).toBe('от 1 250 000 ₽');

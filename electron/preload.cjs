@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('director', {
   addFolder: () => ipcRenderer.invoke('director:add-folder'),
   forgetFolder: () => ipcRenderer.invoke('director:forget-folder'),
   advisor: payload => ipcRenderer.invoke('director:advisor', payload),
+  resetSession: () => ipcRenderer.invoke('director:reset-session'),
   savePilot: opportunityId => ipcRenderer.invoke('director:save-pilot', opportunityId),
   openExternal: url => ipcRenderer.invoke('director:open-external', url),
   onProgress: callback => {
