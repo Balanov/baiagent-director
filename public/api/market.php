@@ -443,6 +443,15 @@ function is_relevant_company_review(array $item, array $context): bool {
     $experiencePattern = '~(?:^|[\s.!?])(?:я|мы|мне|нам|мной|наш[а-яё]*)(?:\s|$|[,.!?])|\b(?:i|we|my|our)\b|купил|покупал|заказывал|пользу(?:юсь|емся)|используем|сотрудничаем|рекомендую\b|не\s+рекомендую\b|понравил|доволен|недоволен|достоинства\s*:|недостатки\s*:|установил|ездил|съездили|разжигаются|работает\b|сломал~iu';
     $detailPattern = '~\d+\s*(?:отзыв|reviews?)|\d[.,]\d\s*(?:из\s*5|оценок|рейтинг|$)|рекоменд(?:ую|уем|уете|уешь|уют|овал[аи]?)(?:\s|$|[,.!?])|негативн|положительн|достоинств|недостатк|плюсы|минусы|впечатлен|качество|персонал|доставк|возврат~iu';
     $strongDetailPattern = '~\d+\s*(?:отзыв|reviews?)|\d[.,]\d\s*(?:из\s*5|оценок|рейтинг|$)|рекоменд(?:ую|уем|уете|уешь|уют|овал[аи]?)(?:\s|$|[,.!?])|негативн|положительн|достоинств|недостатк|плюсы|минусы|впечатлен~iu';
+    $ownBusiness = [];
+    foreach ($sources as $source) if (($source['kind'] ?? '') === 'company-site') {
+        $ownBusiness[] = ($source['title'] ?? '') . ' ' . ($source['text'] ?? '');
+        foreach ($source['offerings'] ?? [] as $offering) $ownBusiness[] = $offering['name'] ?? '';
+    }
+    $ownBusinessText = review_normalized(implode(' ', $ownBusiness));
+    $accommodation = '~мини[-\s]*отел|гостиниц|хостел|база\s+отдыха|апартамент|\bhotel\b|\bhostel\b~iu';
+    // A coinciding brand name does not make a different business type attributable to this company.
+    if (preg_match($accommodation, $title) && !preg_match($accommodation, $ownBusinessText)) return false;
     if (!$text || preg_match('~отзыв[а-яё]* сотрудник|отзыв[а-яё]* о работодател|работа в |зарплат~iu', $title) || preg_match('~условия труда|карьерных возможност~iu', $text)) return false;
     if (preg_match('~аналитик[аи]|продажи бренда|объ[её]м продаж~iu', $text)) return false;
     $hasExperience = (bool)preg_match($experiencePattern, $text);

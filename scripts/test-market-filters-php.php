@@ -22,6 +22,14 @@ $checks = [
     'reviewTitleDoesNotBecomeOwnAlias' => $cdekPlan['ownAliases'] === [],
     'clothingSellerRejectedForLogistics' => !market_candidate(['title' => 'Одежда оптом с доставкой', 'url' => 'https://clothes.example/', 'text' => 'Оптовый интернет-магазин одежды. Купить одежду с доставкой по России.'], $cdekPlan, 'https://www.cdek.ru/'),
     'actualLogisticsCompanyAccepted' => market_candidate(['title' => 'Деловые Линии — транспортная компания', 'url' => 'https://logistics.example/services', 'text' => 'Грузоперевозки и доставка грузов для бизнеса. Логистические услуги и тарифы.'], $cdekPlan, 'https://www.cdek.ru/'),
+    'sameNameHotelRejectedForRestaurant' => !is_relevant_company_review([
+        'title' => 'Мини-отель Теремок, Старая Станица — отзывы', 'url' => 'https://travel.example/hotel/teremok',
+        'text' => '15 отзывов. Гостям понравились номера, рекомендую для отдыха. Рядом есть рестораны и кафе.', 'contentOrigin' => 'full-page',
+    ], [
+        'companyName' => 'Теремок', 'requestedUrl' => 'https://teremok.ru/', 'offerings' => [['name' => 'Завтрак Богатырский']],
+        'sources' => [['kind' => 'company-site', 'url' => 'https://teremok.ru/', 'title' => 'Теремок', 'text' => 'Сеть ресторанов русской кухни. Блины, каши и завтраки.', 'offerings' => [['name' => 'Завтрак Богатырский']]]],
+        'marketContext' => ['industry' => 'food', 'subject' => 'продукты питания и ресторанный сервис'],
+    ]),
 ];
 $result = ['cdekPlan' => $cdekPlan, 'checks' => $checks];
 file_put_contents(__DIR__ . '/../validation/market-filters-php-fixture.json', json_encode($result, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT));

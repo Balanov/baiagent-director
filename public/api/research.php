@@ -277,6 +277,7 @@ function extract_offerings(DOMXPath $xpath, string $body, string $id, string $ur
             $price = $detailPage ? price_near_name($body, $name) : null;
             $quote = $price ? covering_quote($body, $name, $price) : null;
             if ($price && !$quote) $price = null;
+            if ($price) $price = preg_replace('/[ \x{00A0}]+(?=\x{20BD})/u', '', $price);
             $items[] = ['name' => $name, 'displayName' => $name, 'variant' => '', 'kind' => preg_match('~услуг|service~i', $url) ? 'service' : 'product', 'price' => $price, 'image' => $pageImage, 'quote' => $quote ?: covering_quote($body, $name, null) ?: $name, 'sourceId' => $id, 'sourceTitle' => $title, 'url' => $url];
         }
     }
