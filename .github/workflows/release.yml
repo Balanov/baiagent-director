@@ -59,8 +59,9 @@ jobs:
           name: baiagent-director-${{ matrix.artifact }}
           path: ${{ matrix.files }}
           if-no-files-found: error
+      # Release 1.2.0 publishes the separately verified CI artifact without replacing its checksum.
       - name: Attach artifacts to tagged release
-        if: startsWith(github.ref, 'refs/tags/v') && (github.ref != 'refs/tags/v1.2.0' || matrix.artifact != 'windows-enterprise')
+        if: startsWith(github.ref, 'refs/tags/v') && github.ref != 'refs/tags/v1.2.0'
         uses: softprops/action-gh-release@v2
         with:
           files: ${{ matrix.files }}

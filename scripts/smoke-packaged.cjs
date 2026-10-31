@@ -69,7 +69,7 @@ async function main() {
       await call('Page.bringToFront');
       await evaluate('document.fonts.ready');
       await delay(1110);
-      await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      // Electron may throttle requestAnimationFrame in a hidden test window; never block evidence capture on it.
       await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
       const image = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
       const file = path.join(evidence, `${name}.png`);
@@ -149,6 +149,7 @@ async function main() {
 
     const chat = await askLocal('Что говорят клиенты? Ответь одним коротким предложением со ссылкой на источник. Если отзывы не найдены, прямо скажи.');
     assert.ok(chat.citations > 0, 'Локальный советник не вернул проверяемых источников');
+    assert.doesNotMatch(chat.text, /Мини-отель|гостиница/i, 'В отзывы ресторана попал другой тип бизнеса с тем же именем');
     dialogues.factual = chat;
     checks.push('real-local-chat-with-citations');
     checkpoint('local-chat-complete');

@@ -30,6 +30,17 @@ describe('product review attribution', () => {
     expect(isRelevantCompanyReview({ ...review, text: 'Купил спички для пикника 30 шт.: быстро разжигаются, рекомендую. 5 отзывов.' }, research)).toBe(true);
   });
 
+  it('rejects same-name accommodation when the researched company is a restaurant', () => {
+    const research = context('Теремок', 'https://teremok.ru/', 'Сеть ресторанов русской кухни. Блины, каши и завтраки.', 'Завтрак Богатырский');
+    research.marketContext = { industry: 'food', subject: 'продукты питания и ресторанный сервис' };
+    expect(isRelevantCompanyReview({
+      title: 'Мини-отель Теремок, Старая Станица — отзывы',
+      url: 'https://travel.example/hotel/teremok',
+      text: '15 отзывов. Гостям понравились номера, рекомендую для отдыха. Рядом есть рестораны и кафе.',
+      contentOrigin: 'full-page',
+    }, research)).toBe(false);
+  });
+
   it('does not turn a compatible third-party part into the manufacturer review', () => {
     const research = context('КАМАЗ', 'https://kamaz.example/', 'Производство грузовых автомобилей.', 'КАМАЗ 54901');
     expect(isRelevantCompanyReview({

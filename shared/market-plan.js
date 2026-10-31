@@ -421,6 +421,10 @@ export function isRelevantCompanyReview(item = {}, context = {}) {
   const title = normalizedReviewText(item.title);
   const text = normalizedReviewText(`${item.title || ''} ${item.text || ''}`);
   const path = reviewPagePath(item);
+  const ownBusinessText = normalizedReviewText(sources.filter(source => source.kind === 'company-site').map(source => `${source.title || ''} ${source.text || ''} ${(source.offerings || []).map(offering => offering.name || '').join(' ')}`).join(' '));
+  const accommodation = /мини[-\s]*отел|гостиниц|хостел|база\s+отдыха|апартамент|\bhotel\b|\bhostel\b/i;
+  // A coinciding brand name is not proof of identity when the reviewed business type is absent from the company itself.
+  if (accommodation.test(title) && !accommodation.test(ownBusinessText)) return false;
   if (!text || /отзыв[а-яё]* сотрудник|отзыв[а-яё]* о работодател|работа в |зарплат/i.test(title)
     || /условия труда|карьерных возможност/i.test(text)) return false;
   if (/аналитик[аи]|продажи бренда|объ[её]м продаж/i.test(text)) return false;
