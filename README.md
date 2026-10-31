@@ -35,7 +35,7 @@
 
 [Скачать BAIagent — ИИ-советник 1.2.0 x64](https://baiagent.ru/xray/downloads/BAIagent-Director-Setup-Windows-1.2.0-x64.exe)
 
-**SHA-256:** `970fc23c5c1b2a108133143cb3e1a4c69ab46e0fd8038a6a1861b26e7d900042`
+**SHA-256:** `dc3786210bcff41f01718f5cd1c56bb56bb83da9e027088507ece1e75ffa645c`
 
 [Скачать Balanov.PRO Enterprise 1.1.1 x64](https://balanov.pro/ai-audit/downloads/Balanov-PRO-Enterprise-Setup-Windows-1.1.1-x64.exe)
 
