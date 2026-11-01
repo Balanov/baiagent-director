@@ -1,6 +1,7 @@
 <?php
 declare(strict_types=1);
 require_once __DIR__ . '/market.php';
+require_once __DIR__ . '/url-guard.php';
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, OPTIONS');
@@ -31,23 +32,11 @@ function rate_limit(): void {
     header('X-RateLimit-Limit: 30'); header('X-RateLimit-Remaining: ' . max(0, 30 - $state['count']));
 }
 function normalize_url(string $input): string {
-    $input = trim($input);
-    if ($input === '') fail('Укажите сайт компании');
-    if (!preg_match('~^https?://~i', $input)) $input = 'https://' . $input;
-    $parts = parse_url($input);
-    if (!$parts || empty($parts['host']) || !in_array($parts['scheme'] ?? '', ['http', 'https'], true) || isset($parts['user']) || isset($parts['pass'])) fail('Нужен обычный публичный адрес сайта');
-    if (!in_array((string)($parts['port'] ?? ''), ['', '80', '443'], true)) fail('Нестандартные порты не используются');
-    return $input;
-}
-function public_host(string $host): bool {
-    if (filter_var($host, FILTER_VALIDATE_IP)) return (bool)filter_var($host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
-    $records = @dns_get_record($host, DNS_A + DNS_AAAA) ?: [];
-    if (!$records) return false;
-    foreach ($records as $record) {
-        $ip = $record['ip'] ?? $record['ipv6'] ?? '';
-        if ($ip && !filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) return false;
+    try {
+        return url_guard_normalize($input);
+    } catch (InvalidArgumentException $error) {
+        fail($error->getMessage());
     }
-    return true;
 }
 function research_time_remaining(): float {
     if (!isset($GLOBALS['research_deadline'])) $GLOBALS['research_deadline'] = microtime(true) + 110.0;
@@ -57,8 +46,12 @@ function research_budget(int $reserve = 0): bool { return research_time_remainin
 function fetch_public(string $url, int $redirects = 0): array {
     if ($redirects > 5) throw new RuntimeException('Слишком много перенаправлений');
     if (research_budget(1)) throw new RuntimeException('Источник пропущен: достигнут общий лимит времени исследования');
-    $parts = parse_url($url);
-    if (!$parts || empty($parts['host']) || !in_array($parts['scheme'] ?? '', ['http', 'https'], true) || isset($parts['user']) || isset($parts['pass']) || !in_array((string)($parts['port'] ?? ''), ['', '80', '443'], true) || !public_host($parts['host'])) throw new RuntimeException('Источник не относится к публичной сети');
+    try {
+        $target = url_guard_resolve($url);
+    } catch (InvalidArgumentException $error) {
+        throw new RuntimeException($error->getMessage());
+    }
+    $url = $target['url'];
     $timeout = max(1, min(12, (int)ceil(research_time_remaining() - 1)));
     $body = ''; $tooLarge = false; $location = '';
     $curl = curl_init($url);
@@ -66,6 +59,7 @@ function fetch_public(string $url, int $redirects = 0): array {
         CURLOPT_RETURNTRANSFER => false, CURLOPT_FOLLOWLOCATION => false, CURLOPT_TIMEOUT => $timeout,
         CURLOPT_CONNECTTIMEOUT => min(6, $timeout), CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS, CURLOPT_ENCODING => '',
+        CURLOPT_RESOLVE => $target['resolve'], CURLOPT_PROXY => '',
         CURLOPT_HTTPHEADER => ['Accept: text/html,application/xhtml+xml,application/rss+xml,application/xml,text/xml;q=0.9', 'Accept-Language: ' . RESEARCH_SEARCH_MARKETS[research_language()][0] . ',' . research_language() . ';q=0.9,en;q=0.6'],
         CURLOPT_HEADERFUNCTION => function($ch, $header) use (&$location) { if (stripos($header, 'Location:') === 0) $location = trim(substr($header, 9)); return strlen($header); },
         CURLOPT_WRITEFUNCTION => function($ch, $chunk) use (&$body, &$tooLarge) { if (strlen($body) + strlen($chunk) > MAX_BYTES) { $tooLarge = true; return 0; } $body .= $chunk; return strlen($chunk); },
