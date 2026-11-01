@@ -1,3 +1,6 @@
+import { ANALYSIS_COPY } from './analysis-copy.js';
+import { normalizeLanguage } from './locale.js';
+
 const REQUIREMENTS = {
   chatbot: {
     data: 'Обезличенные обращения, утверждённые ответы, правила записи/заказа и причины эскалации.',
@@ -134,6 +137,17 @@ const OWNERS = {
 };
 
 export function buildPilotBlueprint(opportunity = {}, solution = null) {
+  const language = normalizeLanguage(opportunity.language, 'ru');
+  const localized = ANALYSIS_COPY[language]?.pilot;
+  if (localized) {
+    const category = ['cost', 'revenue', 'offering'].includes(opportunity.category) ? opportunity.category : 'cost';
+    return {
+      baseline: localized.baseline.replace('{metric}', opportunity.metric || opportunity.businessMetric || ''),
+      target: localized.target, period: localized.period, data: localized.data, integrations: localized.integrations,
+      owner: opportunity.owner, effectFormula: localized[`${category}Effect`], humanControl: localized.control,
+      stopRule: localized.stop, scaleRule: opportunity.decision,
+    };
+  }
   const requirements = REQUIREMENTS[solution?.id] || DEFAULT_REQUIREMENTS;
   const category = OWNERS[opportunity.category] ? opportunity.category : 'cost';
   const effectFormula = category === 'cost'

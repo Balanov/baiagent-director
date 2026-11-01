@@ -27,7 +27,13 @@ $partialWeb = [['id' => 'web-1', 'kind' => 'review-snippet', 'url' => 'https://e
 $partialWarnings = [];
 enrich_external($partialWeb, 'https://company.example/', [], $partialWarnings);
 unset($GLOBALS['research_deadline']);
+$englishWithRussianMenu = research_detect_language('en', str_repeat('Our company provides products and services for customers with clear prices and reliable business support. ', 12) . ' Меню Отзывы Контакты');
+research_set_language('en');
+$englishWarning = research_translated_notice('Логотип не определён: изображения без явных признаков бренда не используются.');
+research_set_language('ru');
 $checks = [
+    'phpMatchesJavaScriptLanguageThreshold' => $englishWithRussianMenu === 'en',
+    'phpDiagnosticsUseSelectedLanguage' => !preg_match('~[а-яё]~iu', $englishWarning),
     'expiredBudgetStopsNetworkFetch' => $expiredFetchRejected,
     'partialCoverageIsReported' => count($partialWarnings) === 1 && $partialWeb[0]['text'] === 'Сохранённая поисковая цитата',
     'cdek' => $cdek === 'CDEK',

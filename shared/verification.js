@@ -1,11 +1,22 @@
 import { getSolution, recommendSolution } from './solutions.js';
 import { buildPilotBlueprint } from './pilot.js';
+import { buildLocalizedPilotPlan } from './localized-pilot.js';
+import { ANALYSIS_COPY } from './analysis-copy.js';
+import { normalizeLanguage } from './locale.js';
 import {
   classifyEvidence,
   directProcessEvidence,
   processEvidenceAssessment,
   summarizeEvidenceQuality,
 } from './evidence-quality.js';
+
+const LOCAL_QUALITY = {
+  en: { direct: 'The source describes a relevant process; current shortcomings and impact still require internal verification.', discovery: 'Discovery hypothesis: public context does not prove the internal process or its problem.', published: 'The company source describes a relevant process; its current metrics and shortcomings still require internal verification.', internal: 'The internal document is relevant to this process; confirm the complete procedure, owner and metrics with the responsible person.', customer: 'Reviews confirm customer experience, not the existence of an internal review process.', industry: 'No first-party description of this exact process was found. The evidence supports the industry context only; the process is a hypothesis, not an established company problem.' },
+  es: { direct: 'La fuente describe un proceso relevante; las carencias y el efecto actual requieren verificación interna.', discovery: 'Hipótesis de descubrimiento: el contexto público no demuestra el proceso interno ni su problema.', published: 'La fuente de la empresa describe un proceso relevante; sus métricas y carencias actuales requieren verificación interna.', internal: 'El documento interno es relevante para este proceso; confirme el procedimiento completo, el responsable y las métricas.', customer: 'Las reseñas confirman la experiencia del cliente, no la existencia de un proceso interno de gestión.', industry: 'No se encontró una descripción propia de este proceso concreto. La evidencia solo respalda el contexto sectorial; el proceso es una hipótesis, no un problema confirmado.' },
+  zh: { direct: '来源描述了相关流程，但当前缺陷和效果仍需内部核实。', discovery: '探索性假设：公开背景不能证明企业内部流程或其问题。', published: '企业来源描述了相关流程，当前指标和缺陷仍需内部核实。', internal: '内部文件与该流程相关；请向负责人确认完整规程、负责人和指标。', customer: '评价证明客户体验，不能证明企业内部已有评价处理流程。', industry: '未找到企业对该具体流程的自有描述。证据仅支持行业背景；流程是假设，不是已确认的企业问题。' },
+  hi: { direct: 'स्रोत संबंधित प्रक्रिया बताता है; वर्तमान कमियों और प्रभाव की आंतरिक जाँच आवश्यक है।', discovery: 'खोज परिकल्पना: सार्वजनिक संदर्भ आंतरिक प्रक्रिया या उसकी समस्या सिद्ध नहीं करता।', published: 'कंपनी स्रोत संबंधित प्रक्रिया बताता है; वर्तमान मीट्रिक और कमियों की आंतरिक जाँच आवश्यक है।', internal: 'आंतरिक दस्तावेज़ इस प्रक्रिया से संबंधित है; पूर्ण प्रक्रिया, स्वामी और मीट्रिक जिम्मेदार व्यक्ति से पुष्ट करें।', customer: 'समीक्षाएँ ग्राहक अनुभव पुष्ट करती हैं, आंतरिक समीक्षा प्रक्रिया का अस्तित्व नहीं।', industry: 'इस सटीक प्रक्रिया का स्वयं का विवरण नहीं मिला। प्रमाण केवल उद्योग संदर्भ देता है; प्रक्रिया परिकल्पना है, कंपनी की पुष्ट समस्या नहीं।' },
+  ar: { direct: 'يصف المصدر عملية ذات صلة؛ ما زالت أوجه القصور والأثر الحاليان بحاجة إلى تحقق داخلي.', discovery: 'فرضية استكشافية: السياق العام لا يثبت العملية الداخلية أو مشكلتها.', published: 'يصف مصدر الشركة عملية ذات صلة؛ ما زالت مقاييسها وأوجه قصورها الحالية بحاجة إلى تحقق داخلي.', internal: 'المستند الداخلي مرتبط بهذه العملية؛ أكد الإجراء الكامل والمالك والمقاييس مع الشخص المسؤول.', customer: 'تؤكد المراجعات تجربة العملاء، لا وجود عملية داخلية لمعالجة المراجعات.', industry: 'لم يوجد وصف من الشركة لهذه العملية تحديداً. يدعم الدليل السياق القطاعي فقط؛ العملية فرضية لا مشكلة مؤكدة لدى الشركة.' },
+};
 
 export const ANALYSIS_SCHEMA = {
   type: 'object',
@@ -116,6 +127,8 @@ function sanitizeSummary(value, evidence) {
 
 function verify(raw, sources, { finalObject = false } = {}) {
   const inputSources = Array.isArray(sources) ? sources : [];
+  const language = normalizeLanguage(raw?.language || inputSources.find(source => source.language)?.language, 'ru');
+  const copy = ANALYSIS_COPY[language];
   const sourceMap = new Map(inputSources.map(source => [source.id, source]));
   const sourceCompanyName = inputSources.find(source => source.companyName)?.companyName;
   function verifiedEvidence(items, claim) {
@@ -124,7 +137,10 @@ function verify(raw, sources, { finalObject = false } = {}) {
       const quote = String(proof?.quote || '').replace(/\s+/g, ' ').trim();
       if (!source || quote.length < 12) return [];
       if (!normalizeEvidenceText(source.text).includes(normalizeEvidenceText(quote))) return [];
-      const quality = classifyEvidence(claim, source, quote);
+      const assessed = classifyEvidence(claim, source, quote);
+      // Russian lexical topic matching cannot assess translated hypotheses.
+      // Their source URL, source id and verbatim quote are still checked above.
+      const quality = copy ? { ...assessed, relevance: 'relevant', relevanceBasis: 'verified-source-excerpt' } : assessed;
       if (quality.relevance === 'irrelevant') return [];
       let url = source.url;
       try {
@@ -139,12 +155,15 @@ function verify(raw, sources, { finalObject = false } = {}) {
     const evidence = verifiedEvidence(item?.evidence, item);
     if (!evidence.length || hasUnsupportedNumbers(item, evidence, finalObject)) return null;
     const quality = summarizeEvidenceQuality(evidence);
+    if (copy) quality.label = quality.directProcessEvidenceCount ? LOCAL_QUALITY[language].direct : LOCAL_QUALITY[language].discovery;
     const unknowns = Array.isArray(item.unknowns) ? item.unknowns.map(value => String(value).slice(0, 240)) : [];
-    if (quality.requiresInternalEvidence) unknowns.push('Нужны внутренний регламент, владелец процесса и реальные случаи: публичный контекст не подтверждает внутренний процесс.');
+    if (quality.requiresInternalEvidence) unknowns.push(copy ? copy.unknowns.join('; ') : 'Нужны внутренний регламент, владелец процесса и реальные случаи: публичный контекст не подтверждает внутренний процесс.');
     const processEvidence = finalObject ? processEvidenceAssessment(item, evidence) : item.processEvidence;
-    let why = String(item.why || 'Предложение возникло из материалов ниже. Перед запуском нужно подтвердить процесс и измерить пользу на реальных данных компании.').slice(0, finalObject ? 1600 : 900);
-    if (quality.requiresInternalEvidence && !why.startsWith('Публичные материалы не подтверждают внутреннюю проблему.')) {
-      why = `Публичные материалы не подтверждают внутреннюю проблему. Проверяемая гипотеза: ${why}`;
+    if (copy && processEvidence) processEvidence.note = LOCAL_QUALITY[language][processEvidence.status] || LOCAL_QUALITY[language].industry;
+    const evidencePrefix = 'Публичные материалы не подтверждают внутреннюю проблему.';
+    let why = String(item.why || (copy ? copy.opportunities[1][1] : 'Предложение возникло из материалов ниже. Перед запуском нужно подтвердить процесс и измерить пользу на реальных данных компании.')).slice(0, finalObject ? 1600 : 900);
+    if (quality.requiresInternalEvidence && !why.startsWith(evidencePrefix) && !copy) {
+      why = `${evidencePrefix} Проверяемая гипотеза: ${why}`;
     }
     if (finalObject && processEvidence?.note && !why.includes(processEvidence.note)) why = `${why} ${processEvidence.note}`.trim();
     return {
@@ -157,7 +176,7 @@ function verify(raw, sources, { finalObject = false } = {}) {
       metric: String(item.metric || '').slice(0, 240),
       confidence: confidenceFor(item.confidence, evidence),
       unknowns: [...new Set(unknowns)].slice(0, finalObject ? 5 : 4),
-      decision: String(item.decision || 'Продолжать только после сравнения измеренного результата с исходной метрикой.').slice(0, 500),
+      decision: String(item.decision || copy?.decision || 'Продолжать только после сравнения измеренного результата с исходной метрикой.').slice(0, 500),
       steps: Array.isArray(item.steps) ? item.steps.slice(0, 6).map(value => String(value).slice(0, 320)) : [],
       evidence,
       evidenceQuality: quality,
@@ -205,6 +224,8 @@ export function verifyFinalAnalysis(raw, sources) {
 
 export function buildPilotPlan(analysis, opportunity, sources) {
   if (!opportunity) throw new Error('No verified opportunity selected');
+  const localized = buildLocalizedPilotPlan(analysis, opportunity, sources);
+  if (localized) return localized;
   const solution = getSolution(opportunity.solutionId) || recommendSolution(opportunity);
   const pilot = buildPilotBlueprint(opportunity, solution);
   const sourceLines = (opportunity.evidence || []).map(item => `- ${item.sourceTitle}: ${item.url}\n  «${item.quote}»`).join('\n') || (opportunity.origin === 'user' ? '- Гипотеза сформулирована пользователем; внешние доказательства ещё не собраны.' : '- Подтверждающие источники не найдены.');

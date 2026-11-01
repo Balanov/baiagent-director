@@ -38,9 +38,11 @@ function createWindow() {
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
-  ipcMain.handle('director:research', async (event, url) => {
+  ipcMain.handle('director:research', async (event, payload) => {
     const { researchCompany } = await import('./research.mjs');
-    const research = await researchCompany(url, progress => event.sender.send('director:progress', progress));
+    const url = typeof payload === 'string' ? payload : payload?.url;
+    const language = typeof payload === 'object' ? payload?.language : undefined;
+    const research = await researchCompany(url, progress => event.sender.send('director:progress', progress), language);
     return analyzeFor(event, research);
   });
   ipcMain.handle('director:add-documents', async event => {

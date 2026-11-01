@@ -1,7 +1,9 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__ . '/i18n.php';
 
 function market_plan(array $sources): array {
+    if (research_language() !== 'ru') return international_market_plan($sources, research_language());
     $software = '~\b(?:saas|software|software as a service|cloud platform|digital products?|mobile apps?|web platform)\b|программн[а-яё]* обеспечени|программн[а-яё]* продукт|справочн[а-яё]* [а-яё-]* ?систем|информационн[а-яё]* (?:систем|продукт|ресурс)|цифров[а-яё]* (?:платформ|продукт|сервис)|облачн[а-яё]* (?:платформ|сервис)|разработчик[а-яё]* (?:программ|систем|платформ|приложен)|онлайн[- ](?:сервис|платформ)|веб[- ](?:сервис|платформ)|мобильн[а-яё]* приложен~iu';
     $marketplace = '~(?:сервис|платформа|маркетплейс)\s+(?:поиска\s+|подбора\s+)?специалист|поиск\s+специалист|специалисты\s+напишут\s+сами|исполнител[а-яё]*\s+(?:пришлют|предложат)|заказчик[а-яё]*\s+и\s+исполнител~iu';
     $industries = [
@@ -182,9 +184,15 @@ function market_subject_pattern(string $subject): string {
     return '~' . ($roots[$subject] ?? preg_quote($subject, '~')) . '~iu';
 }
 function market_generic_subject(array $plan): bool {
-    return in_array($plan['subject'] ?? '', ['продукция', 'товары', 'оборудование', 'профессиональные услуги', 'программные продукты', 'цифровые государственные сервисы'], true);
+    return !empty($plan['genericSubject']) || in_array($plan['subject'] ?? '', ['продукция', 'товары', 'оборудование', 'профессиональные услуги', 'программные продукты', 'цифровые государственные сервисы'], true);
 }
 function market_competitor_content(string $text, array $plan): bool {
+    if (international_plan($plan)) {
+        if (strlen($text) < 18 || !preg_match($plan['relevance'], $text) || !preg_match($plan['commercialPattern'], $text)) return false;
+        if (($plan['softwareFamily'] ?? '') === 'collaboration' && !preg_match('~team collaboration|project management|work management|task management|\bjira\b|\basana\b|\btrello\b|monday\.com~iu', $text)) return false;
+        if (!empty($plan['productFamilyPattern']) && preg_match_all($plan['productFamilyPattern'], $text) < 2) return false;
+        return true;
+    }
     if (!market_generic_subject($plan) && !preg_match(market_subject_pattern($plan['subject']), $text)) return false;
     if (market_generic_subject($plan) && !preg_match($plan['relevance'], $text)) return false;
     if (($plan['industry'] ?? '') === 'software') {
@@ -216,6 +224,7 @@ function market_candidate(array $item, array $plan, string $site): bool {
     $candidateHost = strtolower(preg_replace('~^www\.~', '', parse_url($item['url'] ?? '', PHP_URL_HOST) ?: ''));
     $ownHost = strtolower(preg_replace('~^www\.~', '', parse_url($site, PHP_URL_HOST) ?: ''));
     if (!$candidateHost || $candidateHost === $ownHost || str_ends_with($candidateHost, '.' . $ownHost) || excluded_web_source_url((string)($item['url'] ?? ''))) return false;
+    if (international_plan($plan) && !international_competitor_page($item)) return false;
     if (preg_match('~(?:^|\.)(?:yandex\.ru|ya\.ru|2gis\.ru|zoon\.ru|yell\.ru|wikipedia\.org|wikimedia\.org|duckduckgo\.com|bing\.com|google\.com|rbc\.ru|kommersant\.ru|vedomosti\.ru|vc\.ru|cnews\.ru|tadviser\.ru|interfax\.ru|ria\.ru|iz\.ru|forbes\.ru|frc\.ru|tradedir\.ru|optomtovar\.ru|fabricators\.ru|o-zavodah\.ru|productcenter\.ru|supl\.biz|tiu\.ru|pulscen\.ru|optsbyt\.ru|optlist\.ru|mediam\.ru|ozon\.ru|wildberries\.ru|avito\.ru|sima-land\.ru|vseinstrumenti\.ru|onlinetrade\.ru|auchan\.ru|lemanapro\.ru|mktools\.ru|atann\.ru|farpost\.ru|joom\.ru|checko\.ru|behance\.net|pinterest\.[a-z.]+|linkedin\.com|facebook\.com|instagram\.com|youtube\.com|tiktok\.com|twitter\.com|x\.com|reddit\.com|quora\.com|medium\.com|seclists\.org|arxiv\.org)$~iu', $candidateHost)) return false;
     $text = clean_text(($item['title'] ?? '') . ' ' . ($item['text'] ?? ''));
     if (market_editorial_page($item)) return false;
@@ -226,14 +235,23 @@ function market_candidate(array $item, array $plan, string $site): bool {
     $ownBrand = explode('.', $ownHost)[0]; $aliases = ['cdek' => ['сдэк'], 'kaspersky' => ['касперск'], 'dns' => ['днс']];
     $ownNames = array_values(array_filter(array_map('lower_text', array_merge([(string)($plan['companyName'] ?? ''), $ownBrand], $plan['ownAliases'] ?? [], $aliases[$ownBrand] ?? [])), fn($name) => strlen($name) >= 3));
     foreach ($ownNames as $name) if (str_contains($candidateHost, $name) || str_contains(lower_text($text), $name)) return false;
-    if (($plan['industry'] ?? '') === 'logistics') {
+    if (international_plan($plan)) {
+        $lowerTitle = lower_text($title); $hostLabels = explode('.', $candidateHost);
+        foreach ($plan['ownOfferingNames'] ?? [] as $offeringName) {
+            $name = lower_text(clean_text((string)$offeringName));
+            if (text_length($name) < 4 || text_length($name) > 100 || preg_match('~^(?:products?|services?|software|platform|solutions?|home|smart home)$~iu', $name)) continue;
+            $hostName = preg_replace('/[^\p{L}\p{N}]+/u', '', $name) ?? '';
+            if (str_contains($lowerTitle, $name) || in_array($hostName, $hostLabels, true)) return false;
+        }
+    }
+    if (!international_plan($plan) && ($plan['industry'] ?? '') === 'logistics') {
         if (preg_match('~интернет-магазин|мебел|корзина|доставка заказов|оплата и доставка~iu', $text) && preg_match('~отправк[а-яё]*\s+через|доставк[а-яё]*\s+(?:через|транспортн)|транспортными компаниями|другие\s+ТК~iu', $text)) return false;
         if (preg_match('~калькулятор|рассчита(?:ть|йте)|расч[её]т\s+(?:стоимости|тарифа|доставки)|calculator|calculate~iu', $text)) {
             $brand = competitor_name($item);
             if (!$brand || !str_contains(lower_text($title), lower_text($brand))) return false;
         } elseif (!preg_match('~логистическ[а-яё]* (?:компан|оператор|услуг)|транспортн[а-яё]*[- ]?(?:логистическ[а-яё]* )?компан|курьерск[а-яё]* (?:служб|доставк|компан)|служб[а-яё]* доставки|оператор доставки|грузоперевоз|фулфилмент|экспедировани|\b3pl\b~iu', $text)) return false;
     }
-    if (($plan['industry'] ?? '') === 'healthcare') {
+    if (!international_plan($plan) && ($plan['industry'] ?? '') === 'healthcare') {
         if (preg_match('~(?:^|\.)(?:docdoc|prodoctorov|napopravku|sberhealth|zoon|yandex|2gis)\.[a-z.]+$~iu', $candidateHost)) return false;
         if (preg_match('~мис\s+для|медицинск[а-яё]*\s+информационн[а-яё]*\s+систем|автоматизац[а-яё]*\s+клиник|it[- ]?решени[а-яё]*\s+для\s+клиник|сервис\s+онлайн-записи|агрегатор~iu', $text)) return false;
         if (!preg_match('~клиник|лаборатор|медицинск[а-яё]*\s+центр|диагностик|стационар|пациент~iu', $text)) return false;
@@ -255,12 +273,27 @@ function market_news(array $item, array $plan): bool {
     if (strlen($text) < 20 || !$published || $published > time() + 172800 || time() - $published >= 548 * 86400) return false;
     if (preg_match('~как спичк|спички пироманьяку|рассада|рассаду~iu', $text)) return false;
     if (!empty($plan['serviceMarketplace']) && !preg_match($plan['relevance'], $text)) return false;
+    if (international_plan($plan)) return preg_match($plan['newsSignal'], $text) && preg_match($plan['relevance'], $text) && (empty($plan['productFamilyPattern']) || preg_match($plan['productFamilyPattern'], $text));
     if (!preg_match('~рынок|рынк[аеу]|динамик|спрос|производств|завод|фабрик|экспорт|импорт|подорожа|подеше|цен[аыуе]|запуск~iu', $text)) return false;
     return (bool)preg_match(market_generic_subject($plan) ? $plan['relevance'] : market_subject_pattern($plan['subject']), $text);
 }
 function market_evidence(array $item, array $plan, string $kind): bool {
     $text = clean_text(($item['title'] ?? '') . ' ' . ($item['text'] ?? ''));
     if (strlen($text) < 60) return false;
+    if (international_plan($plan)) {
+        if (!preg_match($plan['relevance'], $text)) return false;
+        if (!empty($plan['productFamilyPattern']) && !preg_match($plan['productFamilyPattern'], $text)) return false;
+        if ($kind === 'search-snippet') {
+            $lower = lower_text($text);
+            foreach (array_merge([$plan['companyName'] ?? ''], $plan['ownAliases'] ?? []) as $alias) {
+                $alias = lower_text(trim((string)$alias)); if (text_length($alias) >= 3 && str_contains($lower, $alias)) return true;
+            }
+            return false;
+        }
+        if ($kind === 'customer-snippet') return (bool)preg_match($plan['customerPattern'], $text);
+        if ($kind === 'market-price-snippet') return (bool)preg_match($plan['pricePattern'], $text);
+        return (bool)preg_match($plan['trendPattern'], $text);
+    }
     if (!empty($plan['serviceMarketplace']) && !preg_match($plan['relevance'], $text)) return false;
     if (!preg_match(market_generic_subject($plan) ? $plan['relevance'] : market_subject_pattern($plan['subject']), $text)) return false;
     if ($kind === 'customer-snippet') return (bool)preg_match('~выбир|выбор|отзыв|жалоб|клиент|покупател|качеств|сервис~iu', $text);
@@ -268,7 +301,8 @@ function market_evidence(array $item, array $plan, string $kind): bool {
     return (bool)preg_match('~рынок|рынк[аеу]|динамик|спрос|рост[аеу]?|снижен|объ[её]м|тренд|прогноз|исследован|статистик~iu', $text);
 }
 function market_news_search(string $query): array {
-    $result = fetch_public('https://news.google.com/rss/search?q=' . rawurlencode($query) . '&hl=ru&gl=RU&ceid=RU:ru');
+    [$tag, $country, $language, $ceid] = RESEARCH_SEARCH_MARKETS[research_language()];
+    $result = fetch_public('https://news.google.com/rss/search?q=' . rawurlencode($query) . '&hl=' . rawurlencode($language) . '&gl=' . rawurlencode($country) . '&ceid=' . rawurlencode($ceid));
     $xml = @simplexml_load_string($result['body']); $items = [];
     if ($xml) foreach ($xml->channel->item as $entry) {
         $title = clean_text((string)$entry->title); $url = clean_text((string)$entry->link); $text = clean_text((string)$entry->description) ?: $title;
@@ -280,7 +314,7 @@ function market_news_search(string $query): array {
 function text_length(string $value): int { return function_exists('mb_strlen') ? mb_strlen($value) : (preg_match_all('/./us', $value, $matches) ?: 0); }
 function upper_text(string $value): string {
     if (function_exists('mb_strtoupper')) return mb_strtoupper($value);
-    return strtr($value, ['а'=>'А','б'=>'Б','в'=>'В','г'=>'Г','д'=>'Д','е'=>'Е','ё'=>'Ё','ж'=>'Ж','з'=>'З','и'=>'И','й'=>'Й','к'=>'К','л'=>'Л','м'=>'М','н'=>'Н','о'=>'О','п'=>'П','р'=>'Р','с'=>'С','т'=>'Т','у'=>'У','ф'=>'Ф','х'=>'Х','ц'=>'Ц','ч'=>'Ч','ш'=>'Ш','щ'=>'Щ','ъ'=>'Ъ','ы'=>'Ы','ь'=>'Ь','э'=>'Э','ю'=>'Ю','я'=>'Я']);
+    return strtoupper(strtr($value, ['а'=>'А','б'=>'Б','в'=>'В','г'=>'Г','д'=>'Д','е'=>'Е','ё'=>'Ё','ж'=>'Ж','з'=>'З','и'=>'И','й'=>'Й','к'=>'К','л'=>'Л','м'=>'М','н'=>'Н','о'=>'О','п'=>'П','р'=>'Р','с'=>'С','т'=>'Т','у'=>'У','ф'=>'Ф','х'=>'Х','ц'=>'Ц','ч'=>'Ч','ш'=>'Ш','щ'=>'Щ','ъ'=>'Ъ','ы'=>'Ы','ь'=>'Ь','э'=>'Э','ю'=>'Ю','я'=>'Я']));
 }
 function codepoint_utf8(int $code): string {
     if ($code <= 0x7f) return chr($code);
@@ -326,7 +360,7 @@ function decode_punycode_label(string $label): string {
 }
 function competitor_name(array $source): string {
     $legalForm = '~^(?:ООО|АО|ПАО|ЗАО|ИП)\s+~iu';
-    $genericTitle = '~^(?:(?:логистика|кибербезопасность|доставка|производство|профессиональные услуги|спички|средства для розжига|розжиг)(?:\s+для\s+|$)|(?:аутсорсинг|производитель оптом|производители|услуги|каталог|главная|информационные ресурсы|document|www)|(?:collaboration|project management|team collaboration)(?:\s+(?:software|platform|tool))*)$~iu';
+    $genericTitle = '~^(?:(?:логистика|кибербезопасность|доставка|производство|профессиональные услуги|спички|средства для розжига|розжиг)(?:\s+для\s+|$)|(?:аутсорсинг|производитель оптом|производители|услуги|каталог|главная|информационные ресурсы|document|www|españa|spain|united states|india|china|россия|ai innovation workspace|task and project management software|project & work management software|transporte y entrega de mercancías)|(?:collaboration|project management|team collaboration)(?:\s+(?:software|platform|tool))*)$~iu';
     $normalize = function(string $value) use ($legalForm): string {
         $cleaned = trim(preg_replace('~^(?:интернет-магазин|официальный сайт|компания)\s+~iu', '', preg_replace($legalForm, '', clean_text($value))) ?? '');
         return preg_match('~^(?:www\.)?([\p{L}\p{N}-]+)\.[a-z]{2,}$~iu', $cleaned, $match) ? $match[1] : $cleaned;
@@ -336,6 +370,17 @@ function competitor_name(array $source): string {
         return $length >= 3 && $length <= $limit && !preg_match($genericTitle, $value)
             && !preg_match('~(?:\.{3}|…)|купить|каталог|цен[аыуе]|стоимост|оптом|доставка|производств|решения для|официальный сайт|рассчита|калькулятор|^www$|^(?:online\s+)?project management\b~iu', $value);
     };
+    $labels = array_values(array_filter(explode('.', strtolower((string)(parse_url((string)($source['url'] ?? ''), PHP_URL_HOST) ?: '')))));
+    $lastLabel = $labels[count($labels) - 1] ?? '';
+    $publicSuffix = '~^(?:com|net|org|ru|su|io|ai|co|uk|de|fr|es|it|eu|cn|in|au|br|mx|jp|nl|se|no|fi|pl|cz|sk|ua|kz|by|biz|info|app|dev|cloud|xyz|online|site|shop|store|tech|me|tv|cc|us|ca|ch|at|be|dk|ie|pt|gr|tr|sa|ae|qa|za|gov|edu|mil|xn--[a-z0-9-]+)$~i';
+    $rawDomainBrand = count($labels) > 1 && !preg_match($publicSuffix, $lastLabel) ? $lastLabel : ($labels[count($labels) - 2] ?? $labels[0] ?? '');
+    $decodedDomainBrand = decode_punycode_label($rawDomainBrand);
+    $formatDomainBrand = function(string $value): string {
+        $brand = decode_punycode_label($value) ?: 'Компания';
+        return text_length($brand) <= 7 ? upper_text($brand) : $brand;
+    };
+    $domainConfirmed = text_length($decodedDomainBrand) >= 3 && preg_match('~(?<![\p{L}\p{N}])' . preg_quote($decodedDomainBrand, '~') . '(?![\p{L}\p{N}])~iu', clean_text(implode(' ', [(string)($source['organizationName'] ?? ''), (string)($source['siteName'] ?? ''), (string)($source['title'] ?? ''), (string)($source['text'] ?? '')])));
+    $descriptiveTitle = '~^(?:(?:log[ií]stic[ao]s?|transporte|env[ií]os?|paqueter[ií]a|delivery|shipping|logistics|software|services?|soluciones|solutions?|confiable|reliable|segura|secure|global|internacional|international|express|rápida|fast|calidad|quality|empresarial|business|mercancías|freight|transport|entrega|españa|spain|china|bahrain|bahrein|europe|europa|desde|hasta|de|a|y|from|to|and|логистика|над[её]жн[а-яё]*|доставка|транспорт|услуги|качество|para|empresas|for)\s*)+$~iu';
     $structured = $normalize(preg_split('/[|—–·:]|\s+-\s+/u', clean_text((string)($source['organizationName'] ?? '') ?: (string)($source['siteName'] ?? '')))[0]);
     if ($usable($structured, 100)) return $structured;
     $rawTitle = clean_text((string)($source['title'] ?? ''));
@@ -343,24 +388,26 @@ function competitor_name(array $source): string {
     $parts = preg_split('/[|—–·:]|\s+-\s+/u', $rawTitle, -1, PREG_SPLIT_NO_EMPTY) ?: [];
     foreach ($parts as $part) {
         $candidate = trim(preg_replace('~\s+для\s+(?:бизнеса|компаний|организаций|юристов|бухгалтеров).*$~iu', '', preg_replace('~^(?:тарифы|цены|прайс|стоимость)\s+~iu', '', $normalize($part))) ?? '');
-        if ($usable($candidate)) return $candidate;
+        if ($usable($candidate) && !(preg_match($descriptiveTitle, $candidate) && !str_contains(lower_text($candidate), lower_text($decodedDomainBrand)))) return $candidate;
     }
     if (preg_match('~(?:^|\s)([А-ЯЁA-Z][А-ЯЁA-Z0-9-]{2,})(?:$|\s)~u', $rawTitle, $match) && !preg_match('~^(?:ООО|АО|ПАО|ЗАО|ИП|WWW)$~iu', $match[1])) return $match[1];
-    $brand = site_identity((string)($source['url'] ?? ''))['brand']; $brand = decode_punycode_label($brand) ?: 'Компания';
-    return text_length($brand) <= 7 ? upper_text($brand) : $brand;
+    $rawBrand = !preg_match($publicSuffix, $lastLabel) && !$domainConfirmed ? ($labels[count($labels) - 2] ?? $rawDomainBrand) : $rawDomainBrand;
+    return $formatDomainBrand($rawBrand);
 }
 function relevant_market_quote(array $source, array $plan): string {
     $sentences = array_values(array_filter(array_merge([(string)($source['title'] ?? '')], preg_split('/(?<=[.!?…])\s+/u', (string)($source['text'] ?? ''), -1, PREG_SPLIT_NO_EMPTY) ?: []), fn($sentence) => $sentence !== ''));
     $matching = [];
     foreach (array_map('clean_text', $sentences) as $sentence) {
         if (strlen($sentence) < 18 || !market_competitor_content($sentence, $plan)) continue;
-        $score = min(strlen($sentence), 240) / 40 + (preg_match('~производств|изготавлива|поставля|продаж|купить|каталог|цен[аыуе]|стоимост|услуг|сервис|оптом~iu', $sentence) ? 4 : 0);
+        $commercial = international_plan($plan) ? $plan['commercialPattern'] : '~производств|изготавлива|поставля|продаж|купить|каталог|цен[аыуе]|стоимост|услуг|сервис|оптом~iu';
+        $score = min(strlen($sentence), 240) / 40 + (preg_match($commercial, $sentence) ? 4 : 0);
         $matching[] = ['sentence' => $sentence, 'score' => $score];
     }
     usort($matching, fn($a, $b) => $b['score'] <=> $a['score']);
     return $matching ? limit_text($matching[0]['sentence'], 420) : '';
 }
 function is_review_material(array $item): bool {
+    if (research_language() !== 'ru') return international_review_material($item);
     if (in_array($item['pageType'] ?? '', ['article', 'search'], true) || preg_match('~(?:^|/)search(?:/|$)~i', (string)(parse_url($item['url'] ?? '', PHP_URL_PATH) ?: ''))) return false;
     $text = ($item['title'] ?? '') . ' ' . ($item['text'] ?? '');
     if (preg_match('~отзыв[а-яё]* сотрудник|отзыв[а-яё]* о работодател|работа в |условия труда|зарплат|карьерных возможност~iu', $text)) return false;
@@ -401,7 +448,7 @@ function review_company_aliases(array $context, array $sources): array {
         $aliases[$brand] = true;
         foreach (['cdek' => ['сдэк'], 'kaspersky' => ['касперск'], 'dns' => ['днс']][$brand] ?? [] as $alias) $aliases[$alias] = true;
     }
-    return array_keys($aliases);
+    return array_map('strval', array_keys($aliases));
 }
 function review_offering_aliases(array $context, array $sources): array {
     $research = $context['research'] ?? $context; $offerings = $context['offerings'] ?? $research['offerings'] ?? [];
@@ -411,7 +458,7 @@ function review_offering_aliases(array $context, array $sources): array {
         $alias = review_normalized($name); $length = text_length($alias);
         if ($length >= 4 && $length <= 100 && !preg_match('~^(?:продукция|продукты|товары|услуги|сервисы|доставка|products?|services?|software|platform)$~iu', $alias) && !preg_match('~заказать|прайс-лист|узнать цену|получить предложение~iu', $alias)) $aliases[$alias] = true;
     }
-    return array_keys($aliases);
+    return array_map('strval', array_keys($aliases));
 }
 function review_purposeful_mention(string $text, array $aliases): bool {
     foreach ($aliases as $alias) {
@@ -437,6 +484,7 @@ function review_fuzzy_offering(string $text, array $aliases, array $companyAlias
     return false;
 }
 function is_relevant_company_review(array $item, array $context): bool {
+    if (research_language() !== 'ru') return international_relevant_review($item, $context);
     $research = $context['research'] ?? $context; $sources = $context['sources'] ?? $research['sources'] ?? [];
     $title = review_normalized((string)($item['title'] ?? '')); $text = review_normalized($title . ' ' . (string)($item['text'] ?? ''));
     $path = (string)(parse_url($item['url'] ?? '', PHP_URL_PATH) ?: '');

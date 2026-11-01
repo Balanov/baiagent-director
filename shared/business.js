@@ -21,6 +21,31 @@ const SEGMENTS = [
   { id: 'partners', label: 'Партнёры, дилеры и франчайзи', pattern: /партн[её]р|дилер|франшиз|франчайз/i },
 ];
 
+import { researchLanguage } from './locale.js';
+
+const INTERNATIONAL_INDUSTRY_PATTERNS = {
+  government: /government (?:services?|agency|portal)|public services|servicios públicos|数字政务|सरकारी सेवा|خدمات حكومية/i,
+  cybersecurity: /cybersecurity|information security|ciberseguridad|网络安全|साइबर सुरक्षा|أمن سيبراني/i,
+  software: /\b(?:software|cloud computing|developer tools|enterprise platform|mobile applications?)\b|software empresarial|plataforma en la nube|软件|云平台|सॉफ्टवेयर|क्लाउड|برمجيات|منصة سحابية/i,
+  logistics: /\b(?:logistics|freight|parcel delivery|shipping services?|courier services?)\b|logística|transporte de mercancías|env[ií]os?|paquetes?|cartas?|物流|配送|लॉजिस्टिक्स|डिलीवरी|خدمات لوجستية|شحن/i,
+  distribution: /\b(?:equipment distributor|wholesale supplier|industrial supplies)\b|distribuidor de equipos|设备经销|उपकरण वितरक|موزع معدات/i,
+  manufacturing: /\b(?:manufacturer|manufacturing|manufacture|factory|industrial (?:technology|products|clients)|home appliances?|smart home)\b|fabricante|productos industriales|制造商|工业产品|家电|智能制造|निर्माता|उत्पादन|شركة تصنيع|منتجات صناعية/i,
+  retail: /\b(?:online store|online retail|e-?commerce|retail store)\b|tienda online|comercio electrónico|在线商店|零售|ऑनलाइन स्टोर|खुदरा|متجر إلكتروني|تجزئة/i,
+  food: /\b(?:restaurant|restaurants|fast food|food delivery|menu|cafe|catering|chicken|burgers?|pizza)\b|restaurante|comida rápida|entrega de comida|menú|餐厅|食品|菜单|रेस्तरां|फास्ट फूड|खाद्य|مطعم|وجبات سريعة|توصيل طعام/i,
+  finance: /\b(?:banking|financial services|insurance|payments|business loans?)\b|servicios financieros|banca|seguros|金融|银行|वित्तीय सेवा|बैंकिंग|خدمات مالية|مصرفية/i,
+  construction: /\b(?:construction|engineering services|building materials|contractor)\b|construcción|ingeniería|materiales de construcción|建筑|工程服务|निर्माण|इंजीनियरिंग|خدمات بناء|مواد بناء/i,
+  healthcare: /\b(?:healthcare|medical clinic|dental|hospital|patient services)\b|clínica|servicios médicos|sanitarios|医疗|诊所|स्वास्थ्य सेवा|क्लिनिक|رعاية صحية|عيادة/i,
+  education: /\b(?:education|training courses|online learning|professional training)\b|formación|cursos|educación|教育|课程|शिक्षा|पाठ्यक्रम|تعليم|دورات/i,
+  professional: /\b(?:consulting|legal services|accounting services|professional services)\b|consultoría|servicios profesionales|咨询|专业服务|परामर्श|व्यावसायिक सेवा|خدمات استشارية|خدمات مهنية/i,
+};
+
+const INTERNATIONAL_SEGMENT_PATTERNS = {
+  business: /\b(?:for business|businesses|enterprises|organisations|organizations|b2b|corporate)\b|para empresas|empresas|企业|公司|व्यापार|कंपनियों|للشركات|الأعمال/i,
+  consumers: /\b(?:for consumers|individual customers|for you|for families|personal)\b|particulares|clientes individuales|个人|家庭|व्यक्तिगत|उपभोक्ता|للأفراد|شخصي/i,
+  commerce: /\b(?:online sellers|e-?commerce sellers|retailers|merchants|marketplace sellers)\b|vendedores en línea|comercios|在线商家|电商|ऑनलाइन विक्रेता|खुदरा विक्रेता|البائعون عبر الإنترنت|التجار/i,
+  partners: /\b(?:partners|dealers|franchisees|resellers)\b|socios|distribuidores|franquiciados|合作伙伴|加盟商|भागीदार|फ्रैंचाइज़ी|شركاء|أصحاب الامتياز/i,
+};
+
 function clean(value = '') { return String(value).replace(/\s+/g, ' ').trim(); }
 
 function quoteFrom(source, pattern) {
@@ -93,23 +118,36 @@ export function createBusinessProfile(research = {}) {
   const industryText = value => value.replace(/производственн[а-яё]*\s+календар[ьеяю]|исполнительн[а-яё]*\s+производств[а-яё]*|судебн[а-яё]*\s+производств[а-яё]*|производств[а-яё]*\s+по\s+(?:делу|делам)/gi, ' ');
   const primaryText = industryText(basis[0] ? `${basis[0].title || ''} ${basis[0].text || ''}` : '');
   const secondaryText = industryText(basis.slice(1).map(source => `${source.title || ''} ${source.text || ''}`).join(' '));
+  const international = researchLanguage(research) !== 'ru';
+  const primaryModelText = primaryText.slice(0, 8000);
   const industries = INDUSTRIES.map(industry => {
+    const pattern = international ? new RegExp(`${industry.pattern.source}|${INTERNATIONAL_INDUSTRY_PATTERNS[industry.id].source}`, 'i') : industry.pattern;
     const strong = INDUSTRY_STRENGTH[industry.id];
     const primaryModel = PRIMARY_INDUSTRY_MODEL[industry.id];
-    const score = countMatches(primaryText, industry.pattern) * 4 + countMatches(secondaryText, industry.pattern)
+    const score = countMatches(primaryText, pattern) * 4 + countMatches(secondaryText, pattern)
       + (strong ? countMatches(primaryText, strong) * 6 + countMatches(secondaryText, strong) * 2 : 0)
-      + (primaryModel?.test(primaryText) ? 48 : 0);
+      + (primaryModel?.test(primaryModelText) ? 48 : 0)
+      + (international && industry.id === 'logistics' && /\b(?:logistics (?:compan|services?|provider)|freight (?:compan|services?|provider)|parcel delivery|postal services?|courier services?)\b|sigue tu envío|env[ií]a paquetes|paquetes? y cartas|servicios? de paqueter[ií]a|物流(?:公司|服务|配送)|配送(?:公司|服务)|خدمات لوجستية|शिपिंग सेवा/i.test(primaryModelText) ? 72 : 0)
+      + (international && /restaurant|fast food|restaurante|comida rápida|餐厅|रेस्तरां|مطعم/i.test(primaryModelText) && industry.id === 'food' ? 48 : 0)
+      + (international && /\b(?:smart home|industrial technology|home appliances?)\b|家电|智能制造/i.test(primaryModelText) && industry.id === 'manufacturing' ? 48 : 0)
+      + (international && /\b(?:software|cloud platform|developer tools)\b/i.test(primaryModelText) && industry.id === 'software' ? 28 : 0);
     return { ...industry, score };
   }).filter(item => item.score > 0).sort((a, b) => b.score - a.score);
-  const industry = industries[0] ? { ...industries[0], evidence: evidenceFrom(basis, new RegExp(`${PRIMARY_INDUSTRY_MODEL[industries[0].id]?.source || ''}${PRIMARY_INDUSTRY_MODEL[industries[0].id] ? '|' : ''}${INDUSTRY_STRENGTH[industries[0].id]?.source || ''}${INDUSTRY_STRENGTH[industries[0].id] ? '|' : ''}${industries[0].pattern.source}`, 'i')) } : null;
-  const businessModel = industry?.id === 'professional' && PRIMARY_INDUSTRY_MODEL.professional.test(primaryText) ? 'service-marketplace' : null;
+  const industryPattern = id => international
+    ? new RegExp(`${INDUSTRIES.find(item => item.id === id)?.pattern.source || ''}|${INTERNATIONAL_INDUSTRY_PATTERNS[id].source}`, 'i')
+    : INDUSTRIES.find(item => item.id === id)?.pattern;
+  const industry = industries[0] ? { ...industries[0], evidence: evidenceFrom(basis, new RegExp(`${PRIMARY_INDUSTRY_MODEL[industries[0].id]?.source || ''}${PRIMARY_INDUSTRY_MODEL[industries[0].id] ? '|' : ''}${INDUSTRY_STRENGTH[industries[0].id]?.source || ''}${INDUSTRY_STRENGTH[industries[0].id] ? '|' : ''}${industryPattern(industries[0].id).source}`, 'i')) } : null;
+  const businessModel = !international && industry?.id === 'professional' && PRIMARY_INDUSTRY_MODEL.professional.test(primaryText) ? 'service-marketplace' : null;
   if (businessModel) industry.label = 'Платформа поиска специалистов и услуг';
-  const segments = SEGMENTS.map(segment => ({ ...segment, score: countMatches(combined, segment.pattern) }))
+  const segments = SEGMENTS.map(segment => {
+    const pattern = international ? new RegExp(`${segment.pattern.source}|${INTERNATIONAL_SEGMENT_PATTERNS[segment.id].source}`, 'i') : segment.pattern;
+    return { ...segment, pattern, score: countMatches(combined, pattern) };
+  })
     .filter(item => item.score > 0).sort((a, b) => b.score - a.score).slice(0, 3)
     .map(item => ({ id: item.id, label: item.label, evidence: evidenceFrom(basis, item.pattern) }));
   const riskPattern = /утечк|взлом|хакерск|санкци|штраф|банкрот|задержан[а-яё]*|судебн[а-яё]* (?:иск|разбирательств)|массов[а-яё]* сбо[йи]|приостановил[а-яё]* (?:работу|при[её]м|выдачу)/i;
   const helpingPattern = /оказал[а-яё]* поддерж|помогл|борьб[а-яё]* с|опубликовал[а-яё]* исследован|исследовани[а-яё]* атак|обнаружил|выявил|предупреждает|защитил/i;
-  const risks = external.flatMap(source => {
+  const risks = international ? [] : external.flatMap(source => {
     const sentences = String(source.text || '').match(/[^.!?…]+[.!?…]?/g) || [];
     const sourceBrand = clean(source.title).split(/\s+[—–|]\s+/)[0].replace(/[«»"]/g, '');
     const names = [research.companyName, sourceBrand].map(name => clean(name).toLowerCase()).filter(name => name.length >= 4);

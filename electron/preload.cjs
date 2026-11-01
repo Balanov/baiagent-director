@@ -2,7 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('director', {
   isDesktop: true,
-  research: url => ipcRenderer.invoke('director:research', url),
+  research: (url, language) => ipcRenderer.invoke('director:research', { url, language }),
   addDocuments: () => ipcRenderer.invoke('director:add-documents'),
   addFolder: () => ipcRenderer.invoke('director:add-folder'),
   forgetFolder: () => ipcRenderer.invoke('director:forget-folder'),

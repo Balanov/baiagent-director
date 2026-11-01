@@ -5,13 +5,16 @@ import { cleanOfferingName, dedupeOfferings, extractPrice, isUsefulOfferingName,
 import { createBusinessProfile } from '../shared/business.js';
 import { competitorNameFrom, createMarketSearchPlan, isCompetitorCandidate, isCompetitorContent, isRelevantCompanyReview, isRelevantIndustryEvidence, isRelevantMarketNews, relevantMarketQuote } from '../shared/market-plan.js';
 import { researchErrorMessage } from '../shared/research-error.js';
+import { SEARCH_MARKETS, detectContentLanguage, normalizeLanguage } from '../shared/locale.js';
+import { companyResearchQueries, productResearchQuery, researchNotice, researchProgress } from '../shared/research-copy.js';
+import { isInternationalReviewMaterial } from '../shared/international-market.js';
 
 const MAX_HTML_BYTES = 3_000_000;
 const MAX_PAGES = 24;
 const MAX_EXTERNAL = 18;
 const USER_AGENT = 'BAIagentDirector/0.8 (public evidence research; +https://baiagent.ru/)';
-const COMMERCIAL_LINK = /catalog|shop|store|product|goods|service|solution|software|platform|system|price|pricing|каталог|товар|продукт|услуг|сервис|программ|систем|цен|прайс|стоимост/i;
-const SECONDARY_LINK = /about|company|contact|о-нас|компан|контакт/i;
+const COMMERCIAL_LINK = /catalog|shop|store|product|goods|service|solution|software|platform|system|price|pricing|cat[aá]logo|tienda|productos?|servicios?|soluciones|env[ií]os?|paquetes?|tarifas?|precios?|产品|服务|解决方案|价格|产品目录|उत्पाद|सेवाएँ|कीमत|منتجات|خدمات|أسعار|каталог|товар|продукт|услуг|сервис|программ|систем|цен|прайс|стоимост/i;
+const SECONDARY_LINK = /about|company|contact|empresa|contacto|nosotros|公司|关于|联系|关于我们|कंपनी|संपर्क|حول|اتصل|о-нас|компан|контакт/i;
 const PROCESS_LINK = /appointment|schedule|prepare|regulation|protocol|запис|расписан|подготовк|напоминан|спецификац|регламент|инструкц|при[её]м/i;
 const EDITORIAL_LINK = /(?:^|\/)(?:blogs?|news|articles?|insights|press-?center|статьи|новости)(?:\/|$)/i;
 const REVIEW_LINK = /(?:^|\/)(?:reviews?|otzyvy|отзывы)(?:\/|$)/i;
@@ -165,10 +168,10 @@ function pageType($, url, items) { return searchPage($, url, items) ? 'search' :
 
 function offeringLink(node, source, name, $) {
   const expected = normalizeMarketText(name); const candidates = [];
-  const anchors = [...node.closest('a[href]').get(), ...node.find('a[href]').get()];
+  const anchors = [...node.closest('a[href],[href-link],[redirect-url],[more-info-button-href]').get(), ...node.find('a[href],[href-link],[redirect-url],[more-info-button-href]').get()];
   [...new Set(anchors)].forEach(element => {
     const anchor = $(element); let linked;
-    try { linked = new URL(anchor.attr('href'), source.url); } catch { return; }
+    try { linked = new URL(anchor.attr('href') || anchor.attr('href-link') || anchor.attr('redirect-url') || anchor.attr('more-info-button-href'), source.url); } catch { return; }
     if (!['http:', 'https:'].includes(linked.protocol) || linked.hostname !== new URL(source.url).hostname) return;
     const text = cleanOfferingName(elementText(anchor, $) || anchor.find('img').first().attr('alt') || '');
     if (!isUsefulOfferingName(text)) return;
@@ -250,7 +253,7 @@ function pageCanonicalOffering($, source, structured) {
   const marketingLead = /^(?:turn|start|meet|reach|transform|help|unite|optimize|deliver|ship|build|plan|gain|connect|driving|drive|collaborate|move|harness|measure|align|усили|созда|управл|начни|попроб|открой|больше|вс[её]\s+для)\b/i;
   const usefulTitle = value => {
     const title = cleanOfferingName(String(value || '').split(/[|—–:]/)[0]);
-    return title.length <= 52 && title.split(' ').length <= 5 && !marketingLead.test(title) && !/[.!?]/.test(title)
+    return title.length <= 96 && title.split(' ').length <= 10 && !marketingLead.test(title) && !/[.!?]/.test(title)
       && isUsefulOfferingName(title) && confirmedNameIn(source.text, title) ? title : null;
   };
   const namedTitle = usefulTitle($('meta[property="og:title"]').attr('content')) || usefulTitle($('title').first().text());
@@ -300,10 +303,17 @@ export function extractOfferings($, source, bodyText) {
   const commercialSelector = `${commercialCardSelector},article`;
   const path = pagePath(source.url);
   if (!explicitStructured && /(?:^|\/)(?:ecosystem|partners?|stores?|locations?|pickup-points?|academic|resources?|library|asset-library|learning|curriculum)(?:\/|$)/i.test(path)) return [];
-  const commercialCards = !EDITORIAL_LINK.test(path) && COMMERCIAL_LINK.test(path) && $(commercialCardSelector).filter((_, element) => commercialCardElement(element)).length > 0;
+  const isCustomCommercialCard = element => {
+    const tag = String(element?.tagName || element?.name || '').toLowerCase();
+    return tag.includes('-') && /(?:^|-)(?:product|service|offering)(?:-|$)/.test(tag) && !/(?:button|link|input|form|action)/.test(tag);
+  };
+  const customCards = $('*').filter((_, element) => isCustomCommercialCard(element)).get();
+  const commercialCards = !EDITORIAL_LINK.test(path) && COMMERCIAL_LINK.test(path) && ($(commercialCardSelector).filter((_, element) => commercialCardElement(element)).length > 0 || customCards.length > 0);
   if (editorial && !explicitStructured && !commercialCards) return [];
   const selector = editorial && !commercialCards ? '[itemtype*="Product"],[itemtype*="Service"]' : commercialSelector;
-  $(selector).filter((_, element) => commercialCardElement(element)).each((_, element) => {
+  const candidates = $(selector).filter((_, element) => commercialCardElement(element)).get();
+  for (const element of customCards) if (!candidates.includes(element)) candidates.push(element);
+  $(candidates).each((_, element) => {
     if ($(element).find(selector).filter((__, child) => commercialCardElement(child)).length) return;
     const node = $(element); const text = elementText(node, $);
     if (node.closest('[class*="partner" i],[id*="partner" i],[class*="ecosystem" i],[id*="ecosystem" i]').length) return;
@@ -323,7 +333,7 @@ export function extractOfferings($, source, bodyText) {
     if (price && !quote) { price = null; quote = coveringQuote(text, name, null); }
     if (!quote || unresolvedMarketingName(name, price)) return;
     const type = clean(node.attr('itemtype')); const variant = variantFrom(text);
-    found.push({ name, displayName: displayName(name, source.title, text), variant, kind: /Service/i.test(type) || /услуг|service/i.test(source.url) ? 'service' : 'product', price, image: imageUrl(node, source.url, $), quote, sourceId: source.id, sourceTitle: source.title, url: linked?.url || source.url, commercialCard: node.is(commercialCardSelector) || node.closest(commercialCardSelector).length > 0 });
+    found.push({ name, displayName: displayName(name, source.title, text), variant, kind: /Service/i.test(type) || /услуг|service/i.test(source.url) ? 'service' : 'product', price, image: imageUrl(node, source.url, $), quote, sourceId: source.id, sourceTitle: source.title, url: linked?.url || source.url, commercialCard: node.is(commercialCardSelector) || node.closest(commercialCardSelector).length > 0 || isCustomCommercialCard(element) });
   });
   if (!found.length && !editorial) found.push(...categories);
   if (!found.length && !editorial) {
@@ -359,7 +369,20 @@ export function extractOfferings($, source, bodyText) {
       if (quote) found.push({ name, displayName: name, variant: '', kind: /услуг|service/i.test(source.url) ? 'service' : 'product', price, image: source.pageImage || null, quote, sourceId: source.id, sourceTitle: source.title, url: source.url });
     }
   }
-  const canonical = found.length === 1 && COMMERCIAL_LINK.test(path) ? pageCanonicalOffering($, source, structured) : null;
+  // Corporate divisions are useful recognition evidence even when the site
+  // exposes no product cards. Only explicitly linked business units qualify.
+  if (!found.length && !editorial && /our businesses|美的业务/i.test(clean(source.text).slice(0, 3000))) {
+    $('a[href]').each((_, element) => {
+      const node = $(element); const name = cleanOfferingName(elementText(node, $));
+      if (!isUsefulOfferingName(name) || name.length > 64 || name.split(/\s+/).length > 6 || /^(?:overview|professional platforms|总览|专业平台)$/i.test(name)) return;
+      let linked;
+      try { linked = new URL(node.attr('href'), source.url); } catch { return; }
+      if (linked.hostname !== new URL(source.url).hostname || !/\/our-businesses\//i.test(linked.pathname)) return;
+      const quote = coveringQuote(source.text, name, null);
+      if (quote) found.push({ name, displayName: name, variant: '', kind: 'service', price: null, image: null, quote, sourceId: source.id, sourceTitle: source.title, url: linked.href });
+    });
+  }
+  const canonical = found.length === 1 && pathProductHints(source.url).length > 0 ? pageCanonicalOffering($, source, structured) : null;
   const samePage = item => {
     try { return pagePath(new URL(item.url || source.url, source.url).href) === path; } catch { return true; }
   };
@@ -368,8 +391,10 @@ export function extractOfferings($, source, bodyText) {
     const quote = coveringQuote(source.text, canonical, null) || coveringQuote(bodyText, canonical, null);
     return quote ? [{ ...item, name: canonical, displayName: canonical, quote }] : [];
   });
+  const ownBrand = siteIdentity(source.url).brand;
   return dedupeOfferings(refined.filter(item => {
-    if (unresolvedMarketingName(item.name, item.price) || marketingOfferingName(item.name, item.price)) return false;
+    if (romanizeBrand(item.name) === romanizeBrand(ownBrand)) return false;
+    if (unresolvedMarketingName(item.name, item.price) || (!canonical && marketingOfferingName(item.name, item.price))) return false;
     if (pathProductHints(item.url || source.url).length > 0 || canonical) return true;
     if (/(?:^|\/)(?:enterprise|b2b)(?:\/|$)/i.test(path)) return false;
     return item.commercialCard || explicitStructured;
@@ -415,7 +440,7 @@ export function parsePage(html, url, id) {
   const editorial = editorialPage($, url, structured);
   const structuredOffering = structured.some(item => /Product|Service|SoftwareApplication/i.test(structuredType(item)));
   const headings = $('h1,h2,h3').map((_, element) => $(element).text().replace(/\s+/g, ' ').trim()).get().filter(Boolean).slice(0, 60);
-  const links = $('a[href]').map((_, element) => ({ href: $(element).attr('href'), text: clean($(element).text()) })).get();
+  const links = $('a[href],[href-link],[redirect-url],[more-info-button-href]').map((_, element) => ({ href: $(element).attr('href') || $(element).attr('href-link') || $(element).attr('redirect-url') || $(element).attr('more-info-button-href'), text: clean($(element).text()) || clean($(element).attr('title') || $(element).attr('button-text')) })).get().filter(link => link.href);
   const challengeMarkup = /servicepipe\.tech|<js-challenge-loader|js[-_ ]challenge|checking your browser|проверка браузера|cf-chl|__cf_chl|ddos-?guard|enable javascript|включите javascript/i.test(html);
   $('script,style,noscript,svg,canvas,iframe,nav,footer,form,s,[aria-hidden="true"]').remove();
   // Preserve block and inline-element boundaries: fused words otherwise hide
@@ -424,16 +449,18 @@ export function parsePage(html, url, id) {
   const emptyShell = bodyText.length < 20; const accessIssue = challengeMarkup && bodyText.length < 400 ? 'javascript-challenge' : emptyShell ? 'empty-shell' : null;
   if (accessIssue === 'javascript-challenge') warnings.push('Сайт вернул JavaScript-challenge: содержимое страницы недоступно без браузерной проверки.');
   else if (accessIssue === 'empty-shell') warnings.push('Страница не содержит доступного текста: содержимое сайта не было получено.');
-  const source = { id, kind: 'company-site', url, title: clean(title).slice(0, 200), siteName, organizationName, logo, logoConfidence, logoUncertainty: logoConfidence === 'favicon', pageType: pageType($, url, structured), pageImage: pageImageUrl($, url), contentOrigin: 'full-page', text: [description, headings.join('. '), bodyText].filter(Boolean).join('. ').replace(/\s+/g, ' ').slice(0, 32000), links, warnings: [...new Set(warnings)], accessIssue, retrievedAt: new Date().toISOString() };
+  const declaredLanguage = clean($('html').attr('lang') || $('meta[http-equiv="content-language" i]').attr('content') || '');
+  const source = { id, kind: 'company-site', url, title: clean(title).slice(0, 200), siteName, organizationName, logo, logoConfidence, logoUncertainty: logoConfidence === 'favicon', pageType: pageType($, url, structured), pageImage: pageImageUrl($, url), contentOrigin: 'full-page', text: [description, headings.join('. '), bodyText].filter(Boolean).join('. ').replace(/\s+/g, ' ').slice(0, 32000), declaredLanguage, links, warnings: [...new Set(warnings)], accessIssue, retrievedAt: new Date().toISOString() };
+  source.language = detectContentLanguage(declaredLanguage, source.text);
   source.offerings = accessIssue === 'javascript-challenge' ? [] : extractOfferings($, { ...source, editorial, structuredOffering, structuredData: structured }, bodyText);
   return source;
 }
 
 const GENERIC_COMPANY_NAMES = new Set(['ai', 'a.i.', 'ии', 'home', 'homepage', 'website', 'главная', 'официальный сайт', 'официальный']);
-function siteIdentity(siteUrl) { const hostname = new URL(siteUrl).hostname.replace(/^www\./, '').toLowerCase(); const parts = hostname.split('.'); const baseHostname = parts.length > 2 ? parts.slice(-2).join('.') : hostname; return { hostname, baseHostname, brand: baseHostname.split('.')[0] || baseHostname }; }
+function siteIdentity(siteUrl) { const hostname = new URL(siteUrl).hostname.replace(/^www\./, '').toLowerCase(); const parts = hostname.split('.'); const suffixLength = /^(?:com|net|org|co|gov|edu)\.[a-z]{2}$/i.test(parts.slice(-2).join('.')) ? 3 : 2; const baseHostname = parts.length > suffixLength ? parts.slice(-suffixLength).join('.') : hostname; return { hostname, baseHostname, brand: baseHostname.split('.')[0] || baseHostname }; }
 function genericCompanyName(value) {
   const name = clean(value).toLowerCase().replace(/[«»"'“”]/g, '');
-  return GENERIC_COMPANY_NAMES.has(name) || /^(?:(?:официальн[а-яё]*\s+)?сайт(?:\s+(?:компании|организации))?\s+)?(?:ооо|ао|пао|зао|ип|оао)$/.test(name);
+  return GENERIC_COMPANY_NAMES.has(name) || /^(?:english|中文|español|हिन्दी|العربية|home|products?|services?|contact|about us)$/.test(name) || /^(?:(?:официальн[а-яё]*\s+)?сайт(?:\s+(?:компании|организации))?\s+)?(?:ооо|ао|пао|зао|ип|оао)$/.test(name);
 }
 const BRAND_TRANSLITERATION = { а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'c', ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya' };
 function romanizeBrand(value) { return clean(value).toLowerCase().replace(/[а-яё]/g, letter => BRAND_TRANSLITERATION[letter]).replace(/[^a-z0-9]+/g, ''); }
@@ -455,7 +482,8 @@ function quotedBrand(source, brand) {
   return match && confirmsHostname(match[1]) ? clean(match[1]) : null;
 }
 function hostnameConfirmedBrand(value, brand) {
-  const candidate = clean(value).replace(/^(?:ООО|АО|ПАО|ЗАО|ИП|ОАО)\s+/i, '').replace(/^[«“”"']|[»“”"']$/g, '').trim();
+  const candidate = clean(value).replace(/^(?:ООО|АО|ПАО|ЗАО|ИП|ОАО)\s+/i, '').replace(/^[«“”"']|[»“”"']$/g, '')
+    .replace(/^(?:about|welcome\s+to)\s+/i, '').replace(/(?:['’]s)?\s+(?:service|services|official\s+website|homepage)$/i, '').trim();
   const hostnameBrand = romanizeBrand(brand); const candidateBrand = romanizeBrand(candidate);
   if (candidate.length < 3 || candidate.length > 70 || candidate.split(/\s+/).length > 5 || genericCompanyName(candidate)
     || /^(?:www\.)?[\w.-]+\.[a-z]{2,}$/i.test(candidate)
@@ -499,6 +527,14 @@ export function companyNameFromPages(sources, requestedUrl) {
     if (confirmedBrand) return confirmedBrand;
     if (structured.length >= 3 && !genericCompanyName(structured)) return structured;
   }
+  // A corporate division title must not override the company-wide brand.
+  // Accept only a hostname-confirmed explicit corporate name from the page text.
+  const escapedBrand = brand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  for (const source of ownSources) {
+    const match = clean(source?.text).match(new RegExp(`(?:^|[^\\p{L}\\p{N}])(${escapedBrand}(?:\\s+(?:Group|Corporation|Company|Ltd\\.?|Limited|Inc\\.?))?)(?=$|[^\\p{L}\\p{N}])`, 'i'));
+    const confirmedBrand = hostnameConfirmedBrand(match?.[1] || '', brand);
+    if (confirmedBrand) return confirmedBrand;
+  }
   for (const source of ownSources) {
     const confirmedBrand = titleBrand(source, brand);
     if (confirmedBrand) return confirmedBrand;
@@ -536,49 +572,57 @@ const SEARCH_CACHE = new Map();
 const SEARCH_CACHE_TTL = 15 * 60 * 1000;
 const pause = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
-export async function searchWeb(query) {
-  const cached = SEARCH_CACHE.get(query);
+export async function searchWeb(query, requestedLanguage = 'ru') {
+  const language = normalizeLanguage(requestedLanguage, 'ru');
+  const market = SEARCH_MARKETS[language];
+  const cacheKey = `${language}:${query}`;
+  const cached = SEARCH_CACHE.get(cacheKey);
   if (cached && Date.now() - cached.at < SEARCH_CACHE_TTL) return cached.items;
   let items = [];
   try {
-    const result = await fetchPublic(`https://search.lumy.live/search?q=${encodeURIComponent(query)}&format=json&language=ru-RU&categories=general`);
+    const result = await fetchPublic(`https://search.lumy.live/search?q=${encodeURIComponent(query)}&format=json&language=${market.tag}&categories=general`);
     const data = JSON.parse(result.text);
     items = (data.results || []).map(item => ({ url: clean(item.url), title: clean(item.title).slice(0, 200), text: clean(item.content).slice(0, 3000) })).filter(item => item.url && item.title && item.text);
   } catch { /* Use the second provider when metasearch is unavailable. */ }
   if (!items.length) {
-    const result = await fetchPublic(`https://www.bing.com/search?format=rss&mkt=ru-RU&cc=ru&setlang=ru&q=${encodeURIComponent(query)}`);
+    const result = await fetchPublic(`https://www.bing.com/search?format=rss&mkt=${market.tag}&cc=${market.country}&setlang=${language}&q=${encodeURIComponent(query)}`);
     const $ = cheerio.load(result.text, { xmlMode: true });
     items = $('item').map((_, item) => ({ url: $(item).find('link').first().text().trim(), title: clean($(item).find('title').first().text()).slice(0, 200), text: clean($(item).find('description').first().text().replace(/<[^>]+>/g, ' ')).slice(0, 3000) })).get().filter(item => item.url && item.title && item.text);
   }
-  if (items.length) SEARCH_CACHE.set(query, { at: Date.now(), items });
+  items = items.map(item => ({ ...item, language: detectContentLanguage(language, `${item.title} ${item.text}`) }));
+  if (items.length) SEARCH_CACHE.set(cacheKey, { at: Date.now(), items });
   return items;
 }
 function specificOffering(item) { return item.displayName?.split(/\s+/).filter(token => token.length >= 3).length >= 2 || item.name.length >= 18; }
 
-async function searchReferenceWeb(companyName) {
+async function searchReferenceWeb(companyName, requestedLanguage = 'ru') {
+  const language = normalizeLanguage(requestedLanguage, 'ru');
+  const wiki = SEARCH_MARKETS[language].wikipedia;
   const items = [];
   try {
-    const result = await fetchPublic(`https://ru.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(companyName)}&format=json&utf8=1&srlimit=3`);
+    const result = await fetchPublic(`https://${wiki}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(companyName)}&format=json&utf8=1&srlimit=3`);
     const data = JSON.parse(result.text);
     for (const item of data?.query?.search || []) {
       const title = clean(item.title); const text = clean(String(item.snippet || '').replace(/<[^>]+>/g, ' '));
       const directMatch = clean(companyName).length >= 4 && title.toLowerCase().includes(clean(companyName).toLowerCase());
       const latinAlias = /^[A-Z0-9-]{4,}$/.test(clean(companyName)) && item === data.query.search[0];
-      if ((directMatch || latinAlias) && text) items.push({ title: `${title} — Википедия`, url: `https://ru.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`, text });
+      if ((directMatch || latinAlias) && text) items.push({ title: `${title} — Wikipedia`, url: `https://${wiki}.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`, text, language: detectContentLanguage(language, `${title} ${text}`) });
     }
   } catch { /* Reference search is optional and never blocks the company-site analysis. */ }
   return items;
 }
 
-async function searchNewsWeb(query) {
-  const result = await fetchPublic(`https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=ru&gl=RU&ceid=RU:ru`);
+async function searchNewsWeb(query, requestedLanguage = 'ru') {
+  const language = normalizeLanguage(requestedLanguage, 'ru');
+  const market = SEARCH_MARKETS[language];
+  const result = await fetchPublic(`https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=${language}&gl=${market.country}&ceid=${encodeURIComponent(market.news)}`);
   const $ = cheerio.load(result.text, { xmlMode: true });
   return $('item').map((_, element) => {
     const title = clean($(element).find('title').first().text());
     const text = clean($(element).find('description').first().text().replace(/<[^>]+>/g, ' '));
     const url = clean($(element).find('link').first().text());
     const publishedAt = clean($(element).find('pubDate').first().text());
-    return title && url ? { title, url, text: text || title, publishedAt: publishedAt || null } : null;
+    return title && url ? { title, url, text: text || title, publishedAt: publishedAt || null, language: detectContentLanguage(language, `${title} ${text}`) } : null;
   }).get().filter(Boolean).slice(0, 6);
 }
 
@@ -591,36 +635,50 @@ export function isReviewMaterial(item) {
   const reviewHost = /(?:^|\.)(?:irecommend\.ru|otzovik\.com)$/i.test(hostname);
   const trustedMapReview = /(?:^|\.)yandex\.[a-z.]+$/i.test(hostname) && /\/maps\/org\//i.test(path)
     || /(?:^|\.)2gis\.[a-z.]+$/i.test(hostname) && /\/firm\//i.test(path);
-  return /отзыв|рейтинг|оценк|review|rating/i.test(text) && (reviewHost || trustedMapReview && /\d+\s*(?:отзыв|reviews?)/i.test(text) || /\d+\s*(?:отзыв|reviews?)|\d[.,]\d\s*(?:из\s*5|оценок|рейтинг|$)|рекоменд|не рекоменд|негативн|положительн|достоинств|недостатк|плюсы|минусы|впечатлен|качество|персонал|доставк|возврат/i.test(text));
+  return /отзыв|рейтинг|оценк|review|rating|opiniones|reseñas|valoración|评价|评分|समीक्षा|रेटिंग|مراجعات|تقييم|آراء/iu.test(text) && (reviewHost || trustedMapReview && /\d+\s*(?:отзыв|reviews?|opiniones|reseñas|条评价|समीक्षाएँ|مراجعة)/iu.test(text) || /\d+\s*(?:отзыв|reviews?|opiniones|reseñas|समीक्षाएँ|مراجعة)|\d[.,]\d\s*(?:из\s*5|оценок|рейтинг|de\s*5|से\s*5|من\s*5|$)|рекоменд|не рекоменд|негативн|положительн|достоинств|недостатк|плюсы|минусы|впечатлен|качество|персонал|доставк|возврат|recomiendo|no recomiendo|calidad|servicio|推荐|好评|差评|की सिफारिश|गुणवत्ता|أنصح|لا أنصح|جودة/iu.test(text));
 }
 
-export async function searchPublicWeb(companyName, siteUrl, offerings, onProgress, companySources = []) {
+function statusText(language, key, values, fallback) {
+  return language === 'ru' ? fallback : researchProgress(key, language, values) || fallback;
+}
+
+export function selectExternalSources(sources, limit = 56) {
+  const quotas = { 'competitor-candidate': 12, 'review-snippet': 10, 'news-snippet': 10, 'industry-snippet': 8, 'customer-snippet': 8, 'market-price-snippet': 8, 'alternative-snippet': 8, 'search-snippet': 20 };
+  const selected = new Set();
+  for (const [kind, quota] of Object.entries(quotas)) {
+    for (const source of sources.filter(item => item.kind === kind).slice(0, quota)) selected.add(source);
+  }
+  for (const source of sources) {
+    if (selected.size >= limit) break;
+    selected.add(source);
+  }
+  return [...selected].slice(0, limit);
+}
+
+export async function searchPublicWeb(companyName, siteUrl, offerings, onProgress, companySources = [], requestedLanguage = 'ru') {
+  const language = normalizeLanguage(requestedLanguage, 'ru');
   const { hostname, baseHostname } = siteIdentity(siteUrl); const found = new Map(); const warnings = [];
   const searchName = companySearchName(companyName);
-  const reviewRelevant = item => isReviewMaterial(item) && isRelevantCompanyReview(item, { companyName, siteUrl, sources: companySources, offerings });
+  const reviewMaterial = item => language === 'ru' ? isReviewMaterial(item) : isInternationalReviewMaterial(item);
+  const reviewRelevant = item => reviewMaterial(item) && isRelevantCompanyReview(item, { companyName, siteUrl, sources: companySources, offerings, language });
   const add = (item, kind, offeringName = '') => { if (!item.url || found.has(item.url)) return; found.set(item.url, { ...item, id: 'web-pending', kind, offeringName: offeringName || undefined, contentOrigin: 'search-snippet', retrievedAt: new Date().toISOString() }); };
   const companyOwned = url => { try { const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase(); return [hostname, baseHostname].some(owned => host === owned || host.endsWith(`.${owned}`)); } catch { return true; } };
-  const companySearches = [
-    { query: `"${searchName}" отзывы рейтинг`, message: 'Ищу реальные отзывы и оценки' },
-    { query: `"${searchName}" отзывы Яндекс Карты`, message: 'Проверяю оценки компании на картах' },
-    { query: `"${searchName}"`, message: 'Ищу независимые упоминания о компании' },
-    { query: `"${searchName}" клиенты партнеры новости`, message: 'Проверяю клиентов, партнёрства и деловой след' },
-  ];
+  const companySearches = companyResearchQueries(searchName, language);
   let searches = 0;
   for (const search of companySearches) {
     try {
       if (searches++) await pause(900);
-      onProgress?.({ stage: 'external', message: search.message });
-      for (const item of await searchWeb(search.query)) {
+      onProgress?.({ stage: 'external', message: search.message, language });
+      for (const item of await searchWeb(search.query, language)) {
         if (companyOwned(item.url) || !isRelevantSearchResult(item, siteUrl, companyName)) continue;
         add(item, reviewRelevant(item) ? 'review-snippet' : 'search-snippet');
       }
-      onProgress?.({ stage: 'external', message: `Проверено внешних материалов: ${found.size}` });
+      onProgress?.({ stage: 'external', message: statusText(language, 'externalSources', { count: found.size }, `${found.size} sources`), language });
     } catch (error) { warnings.push(error.message); }
   }
   if (found.size < 4) {
-    onProgress?.({ stage: 'external', message: 'Проверяю энциклопедические упоминания' });
-    for (const item of await searchReferenceWeb(searchName)) {
+    onProgress?.({ stage: 'external', message: statusText(language, 'reference', {}, 'Reference sources'), language });
+    for (const item of await searchReferenceWeb(searchName, language)) {
       if (companyOwned(item.url) || !isRelevantSearchResult(item, siteUrl, companyName)) continue;
       add(item, 'search-snippet');
     }
@@ -628,8 +686,9 @@ export async function searchPublicWeb(companyName, siteUrl, offerings, onProgres
   if (![...found.values()].some(source => source.kind === 'review-snippet')) {
     try {
       if (searches++) await pause(900);
-      onProgress?.({ stage: 'external', message: 'Ищу клиентский опыт на картах и отзовиках' });
-      for (const item of await searchWeb(`"${searchName}" отзывы клиентов Яндекс 2ГИС`)) {
+      onProgress?.({ stage: 'external', message: companySearches[1].message, language });
+      const fallbackQuery = language === 'ru' ? `"${searchName}" отзывы клиентов Яндекс 2ГИС` : companySearches[1].query;
+      for (const item of await searchWeb(fallbackQuery, language)) {
         if (companyOwned(item.url) || !isRelevantSearchResult(item, siteUrl, companyName) || !reviewRelevant(item)) continue;
         add(item, 'review-snippet');
       }
@@ -637,7 +696,7 @@ export async function searchPublicWeb(companyName, siteUrl, offerings, onProgres
   }
   const hasOwnText = companySources.some(source => String(source.text || '').trim().length >= 40);
   if (!hasOwnText) {
-    onProgress?.({ stage: 'external', message: 'Сайт отдал мало текста: уточняю профиль по независимым упоминаниям' });
+    onProgress?.({ stage: 'external', message: statusText(language, 'independent', {}, 'Independent company profile'), language });
     const recognitionPages = [...found.values()].filter(source => ['search-snippet', 'review-snippet'].includes(source.kind)).slice(0, 2);
     for (const source of recognitionPages) {
       try {
@@ -645,6 +704,7 @@ export async function searchPublicWeb(companyName, siteUrl, offerings, onProgres
         if (/html|xhtml|text\/plain/i.test(page.contentType)) {
           const parsed = parsePage(page.text, page.url, source.id);
           source.text = parsed.text; source.pageType = parsed.pageType;
+          source.declaredLanguage = parsed.declaredLanguage; source.language = parsed.language;
           source.contentOrigin = 'full-page';
           source.retrievedAt = new Date().toISOString();
         }
@@ -653,14 +713,15 @@ export async function searchPublicWeb(companyName, siteUrl, offerings, onProgres
   }
   const independent = [...found.values()].filter(source => ['search-snippet', 'review-snippet'].includes(source.kind));
   const recognitionSources = hasOwnText ? companySources : [...companySources, ...independent];
-  const profile = createBusinessProfile({ companyName, sources: recognitionSources, offerings });
-  const plan = createMarketSearchPlan({ companyName, sources: recognitionSources, offerings }, profile);
+  const research = { companyName, sources: recognitionSources, offerings, language };
+  const profile = createBusinessProfile(research);
+  const plan = createMarketSearchPlan(research, profile);
   for (const query of plan.competitorQueries) {
     try {
       if (searches++) await pause(900);
-      onProgress?.({ stage: 'external', message: `Ищу прямые сайты конкурентов: ${plan.subject}` });
+      onProgress?.({ stage: 'external', message: statusText(language, 'competitors', { subject: plan.subject }, `${plan.subject} · competitors`), language });
       let accepted = 0;
-      for (const item of await searchWeb(query)) {
+      for (const item of await searchWeb(query, language)) {
         if (companyOwned(item.url) || !isCompetitorCandidate(item, plan, siteUrl)) continue;
         add(item, 'competitor-candidate'); accepted += 1;
         if (accepted >= 6) break;
@@ -670,9 +731,9 @@ export async function searchPublicWeb(companyName, siteUrl, offerings, onProgres
   for (const evidenceQuery of plan.evidenceQueries || []) {
     try {
       if (searches++) await pause(900);
-      onProgress?.({ stage: 'external', message: evidenceQuery.message });
+      onProgress?.({ stage: 'external', message: evidenceQuery.message, language });
       let accepted = 0;
-      for (const item of await searchWeb(evidenceQuery.query)) {
+      for (const item of await searchWeb(evidenceQuery.query, language)) {
         if (companyOwned(item.url) || !isRelevantIndustryEvidence(item, plan, evidenceQuery.kind)) continue;
         add(item, evidenceQuery.kind); accepted += 1;
         if (accepted >= 5) break;
@@ -681,8 +742,8 @@ export async function searchPublicWeb(companyName, siteUrl, offerings, onProgres
   }
   try {
     if (searches++) await pause(900);
-    onProgress?.({ stage: 'external', message: `Проверяю отраслевые новости и динамику: ${plan.subject}` });
-    for (const item of await searchNewsWeb(plan.newsQuery)) { if (isRelevantMarketNews(item, plan)) add(item, 'news-snippet'); }
+    onProgress?.({ stage: 'external', message: statusText(language, 'marketNews', { subject: plan.subject }, `${plan.subject} · market news`), language });
+    for (const item of await searchNewsWeb(plan.newsQuery, language)) { if (isRelevantMarketNews(item, plan)) add(item, 'news-snippet'); }
   } catch (error) { warnings.push(error.message); }
   const hasReviews = [...found.values()].some(source => source.kind === 'review-snippet');
   for (const offering of offerings.filter(specificOffering).slice(0, 2)) {
@@ -690,9 +751,10 @@ export async function searchPublicWeb(companyName, siteUrl, offerings, onProgres
     for (const mode of modes) {
       try {
         if (searches++) await pause(900);
-        const name = offering.displayName || offering.name; onProgress?.({ stage: 'external', message: mode === 'reviews' ? `Ищу отзывы: ${name}` : `Сравниваю предложение: ${name}` });
-        const query = mode === 'reviews' ? `"${name}" отзывы цена` : `"${name}" купить цена аналог`;
-        for (const item of await searchWeb(query)) {
+        const name = offering.displayName || offering.name;
+        onProgress?.({ stage: 'external', message: statusText(language, mode === 'reviews' ? 'productReviews' : 'productAlternatives', { name }, `${name} · ${mode}`), language });
+        const query = productResearchQuery(name, mode, language);
+        for (const item of await searchWeb(query, language)) {
           if (companyOwned(item.url) || !offeringMentioned(name, item)) continue;
           if (mode === 'reviews') { if (reviewRelevant(item)) add(item, 'review-snippet', name); }
           else add(item, 'alternative-snippet', name);
@@ -700,10 +762,12 @@ export async function searchPublicWeb(companyName, siteUrl, offerings, onProgres
       } catch (error) { warnings.push(error.message); }
     }
   }
-  return { sources: [...found.values()].slice(0, 40), warnings: [...new Set(warnings)], plan };
+  return { sources: selectExternalSources([...found.values()]), warnings: [...new Set(warnings)], plan };
 }
 
-async function enrichExternal(external, onProgress, siteUrl, plan, reviewContext) {
+async function enrichExternal(external, onProgress, siteUrl, plan, reviewContext, requestedLanguage = 'ru') {
+  const language = normalizeLanguage(requestedLanguage, 'ru');
+  const reviewMaterial = item => language === 'ru' ? isReviewMaterial(item) : isInternationalReviewMaterial(item);
   const alternatives = []; const identity = siteIdentity(siteUrl);
   const companyOwned = url => { try { const host = new URL(url).hostname.replace(/^www\./, '').toLowerCase(); return [identity.hostname, identity.baseHostname].some(owned => host === owned || host.endsWith(`.${owned}`)); } catch { return false; } };
   const priority = { 'competitor-candidate': 0, 'review-snippet': 1, 'search-snippet': 2, 'industry-snippet': 3, 'customer-snippet': 4, 'alternative-snippet': 5, 'market-price-snippet': 6, 'news-snippet': 9 };
@@ -719,7 +783,7 @@ async function enrichExternal(external, onProgress, siteUrl, plan, reviewContext
     while (cursor < selected.length) {
       const source = selected[cursor++];
       try {
-        onProgress?.({ stage: 'external', message: `Читаю внешний источник: ${source.title}` });
+        onProgress?.({ stage: 'external', message: statusText(language, 'readExternal', { title: source.title }, `Читаю внешний источник: ${source.title}`), language });
         const page = await fetchPublic(source.url); if (!/html|xhtml|text\/plain/i.test(page.contentType)) continue;
         if (companyOwned(page.url)) { source.discard = true; continue; }
         const parsed = parsePage(page.text, page.url, source.id); source.url = page.url; source.pageType = parsed.pageType;
@@ -731,9 +795,10 @@ async function enrichExternal(external, onProgress, siteUrl, plan, reviewContext
           // Do not attribute an employee's review on a mixed map profile to customers.
           if (source.kind === 'review-snippet' && mapProfile && mixedEmploymentReviews && /\d+\s*(?:отзыв|reviews?)/i.test(source.text)) continue;
           source.text = parsed.text;
+          source.declaredLanguage = parsed.declaredLanguage; source.language = parsed.language;
           source.contentOrigin = 'full-page';
           source.retrievedAt = new Date().toISOString();
-          if (source.kind === 'review-snippet' && (!isReviewMaterial(source) || !isRelevantCompanyReview(source, reviewContext))) { source.discard = true; continue; }
+          if (source.kind === 'review-snippet' && (!reviewMaterial(source) || !isRelevantCompanyReview(source, reviewContext))) { source.discard = true; continue; }
           if (source.kind === 'competitor-candidate') {
             if (!isCompetitorCandidate(source, plan, siteUrl) || !isCompetitorContent(source.text, plan)) { source.discard = true; continue; }
             source.competitorName = competitorNameFrom(parsed);
@@ -749,16 +814,20 @@ async function enrichExternal(external, onProgress, siteUrl, plan, reviewContext
   return alternatives;
 }
 
-export function resolvedResearchWarnings(warnings = [], logoConfidence) {
+export function resolvedResearchWarnings(warnings = [], logoConfidence, requestedLanguage = 'ru') {
   const unique = [...new Set(warnings)];
-  return ['markup', 'structured'].includes(logoConfidence) ? unique.filter(warning => !/favicon/i.test(warning)) : unique;
+  const filtered = ['markup', 'structured'].includes(logoConfidence) ? unique.filter(warning => !/favicon/i.test(warning)) : unique;
+  return [...new Set(filtered.map(warning => researchNotice(warning, requestedLanguage)))];
 }
 
-export async function researchCompany(input, onProgress) {
-  const requestedUrl = normalizeCompanyUrl(input); onProgress?.({ stage: 'site', message: 'Открываю сайт и ищу каталог компании' });
+export async function researchCompany(input, onProgress, requestedLanguage = 'ru') {
+  const language = normalizeLanguage(requestedLanguage, 'ru');
+  let requestedUrl;
+  try { requestedUrl = normalizeCompanyUrl(input); } catch (error) { throw new Error(researchErrorMessage(error, language)); }
+  onProgress?.({ stage: 'site', message: statusText(language, 'start', {}, 'Открываю сайт и ищу каталог компании'), language });
   let homepage;
-  try { homepage = await fetchPublic(requestedUrl); } catch (error) { throw new Error(researchErrorMessage(error)); }
-  if (!/html|xhtml|text\/plain/i.test(homepage.contentType)) throw new Error('По адресу нет читаемой веб-страницы');
+  try { homepage = await fetchPublic(requestedUrl); } catch (error) { throw new Error(researchErrorMessage(error, language)); }
+  if (!/html|xhtml|text\/plain/i.test(homepage.contentType)) throw new Error(researchErrorMessage('По адресу нет читаемой веб-страницы', language));
   const logoRank = confidence => ({ favicon: 1, markup: 2, structured: 3 })[confidence] || 0;
   const first = parsePage(homepage.text, homepage.url, 'site-1'); const companyName = companyNameFrom(first, requestedUrl); let companyLogo = first.logo; let companyLogoRank = logoRank(first.logoConfidence);
   const siteWarnings = new Set(first.warnings || []);
@@ -771,7 +840,8 @@ export async function researchCompany(input, onProgress) {
     if (currentOfferings.length >= 24 && sources.length >= 12) break;
     const candidate = queue.shift(); if (candidate.depth > 1 && currentOfferings.length >= 8) continue; if (candidate.depth > 2) continue;
     try {
-      onProgress?.({ stage: 'pages', message: candidate.depth === 1 ? `Открываю: ${candidate.text || new URL(candidate.url).pathname}` : `Углубляю поиск по карточкам: ${candidate.text || new URL(candidate.url).pathname}`, url: candidate.url });
+      const pageName = candidate.text || new URL(candidate.url).pathname;
+      onProgress?.({ stage: 'pages', message: statusText(language, candidate.depth === 1 ? 'openPage' : 'deepenPage', { page: pageName }, candidate.depth === 1 ? `Открываю: ${pageName}` : `Углубляю поиск по карточкам: ${pageName}`), url: candidate.url, language });
       const page = await fetchPublic(candidate.url); if (!/html|xhtml|text\/plain/i.test(page.contentType)) continue;
       const parsed = parsePage(page.text, page.url, `site-${sources.filter(source => source.kind === 'company-site').length + 1}`);
       for (const warning of parsed.warnings || []) siteWarnings.add(warning);
@@ -785,13 +855,14 @@ export async function researchCompany(input, onProgress) {
   const offerings = verifyMarketItems(sources.flatMap(source => source.offerings || []), sources, 40);
   const resolvedCompanyName = companyNameFromPages(sources, homepage.url);
   sources.forEach(source => { if (source.kind === 'company-site') source.companyName = resolvedCompanyName; });
-  const external = await searchPublicWeb(resolvedCompanyName, homepage.url, offerings, onProgress, sources); external.sources.forEach((source, index) => { source.id = `web-${index + 1}`; });
-  const reviewContext = { companyName: resolvedCompanyName, siteUrl: homepage.url, sources, offerings, marketContext: external.plan };
-  const alternativesFromPages = await enrichExternal(external, onProgress, homepage.url, external.plan, reviewContext);
+  const external = await searchPublicWeb(resolvedCompanyName, homepage.url, offerings, onProgress, sources, language); external.sources.forEach((source, index) => { source.id = `web-${index + 1}`; });
+  const reviewContext = { companyName: resolvedCompanyName, siteUrl: homepage.url, sources, offerings, marketContext: external.plan, language };
+  const alternativesFromPages = await enrichExternal(external, onProgress, homepage.url, external.plan, reviewContext, language);
   const companyHost = siteIdentity(homepage.url).baseHostname;
-  external.sources = external.sources.filter(source => !source.discard && !source.title.toLowerCase().includes(companyHost) && (source.kind !== 'review-snippet' || (isReviewMaterial(source) && isRelevantCompanyReview(source, reviewContext)))); sources.push(...external.sources);
+  const reviewMaterial = item => language === 'ru' ? isReviewMaterial(item) : isInternationalReviewMaterial(item);
+  external.sources = external.sources.filter(source => !source.discard && !source.title.toLowerCase().includes(companyHost) && (source.kind !== 'review-snippet' || (reviewMaterial(source) && isRelevantCompanyReview(source, reviewContext)))); sources.push(...external.sources);
   if (first.accessIssue || clean(first.text).length < 40) siteWarnings.add('Содержимое главной страницы недоступно; профиль компании опирается на внешние источники, а не на успешный аудит сайта.');
-  const reviews = sources.filter(source => source.kind === 'review-snippet' && isReviewMaterial(source)).map(source => ({ sourceId: source.id, sourceTitle: source.title, url: source.url, quote: source.text.slice(0, 900), offeringName: source.offeringName || null }));
+  const reviews = sources.filter(source => source.kind === 'review-snippet' && reviewMaterial(source) && isRelevantCompanyReview(source, reviewContext)).map(source => ({ sourceId: source.id, sourceTitle: source.title, url: source.url, quote: source.text.slice(0, 900), offeringName: source.offeringName || null }));
   const competitorHosts = new Set();
   const competitors = sources.filter(source => source.kind === 'competitor-candidate').flatMap(source => {
     const hostname = siteIdentity(source.url).baseHostname;
@@ -803,5 +874,8 @@ export async function researchCompany(input, onProgress) {
   }).slice(0, 12);
   const news = sources.filter(source => source.kind === 'news-snippet').map(source => ({ title: source.title, url: source.url, sourceId: source.id, sourceTitle: source.title, quote: source.text.slice(0, 500), publishedAt: source.publishedAt || null })).slice(0, 8);
   const alternatives = [...alternativesFromPages, ...sources.filter(source => source.kind === 'alternative-snippet').map(source => ({ name: cleanOfferingName(source.title.split(/[|—–]/)[0]), displayName: cleanOfferingName(source.title.split(/[|—–]/)[0]), sourceId: source.id, sourceTitle: source.title, url: source.url, quote: source.text.slice(0, 900), price: extractPrice(source.text), offeringName: source.offeringName || null }))].slice(0, 30);
-  return { requestedUrl: homepage.url, companyName: resolvedCompanyName, companyLogo, sources, offerings, reviews, competitors, news, alternatives, marketContext: { industry: external.plan.industry, subject: external.plan.subject }, coverage: { pages: sources.filter(source => source.kind === 'company-site').length, deepened, external: external.sources.length, firstExternalId: sources.length - external.sources.length }, warnings: resolvedResearchWarnings([...siteWarnings, ...external.warnings], companyLogoRank > 1 ? 'markup' : companyLogoRank === 1 ? 'favicon' : null), createdAt: new Date().toISOString() };
+  if (language !== 'ru') for (const source of sources) {
+    if (source.warnings?.length) source.warnings = source.warnings.map(warning => researchNotice(warning, language));
+  }
+  return { requestedUrl: homepage.url, language, companyName: resolvedCompanyName, companyLogo, sources, offerings, reviews, competitors, news, alternatives, marketContext: { industry: external.plan.industry, subject: external.plan.subject }, coverage: { pages: sources.filter(source => source.kind === 'company-site').length, deepened, external: external.sources.length, firstExternalId: sources.length - external.sources.length }, warnings: resolvedResearchWarnings([...siteWarnings, ...external.warnings], companyLogoRank > 1 ? 'markup' : companyLogoRank === 1 ? 'favicon' : null, language), createdAt: new Date().toISOString() };
 }

@@ -26,5 +26,6 @@ validation/sectors/*
 !validation/sectors/kamaz-local-research.json
 !validation/sectors/kamaz-research.json
 .tools/
+tools/
 __pycache__/
 scripts/run-php-fixtures.py

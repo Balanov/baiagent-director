@@ -7,6 +7,8 @@ import { researchErrorMessage } from '../shared/research-error.js';
 import { DIRECTOR_WINDOWS_DOWNLOAD, ENTERPRISE_WINDOWS_DOWNLOAD, DIRECTOR_RELEASE_VERSION, ENTERPRISE_RELEASE_VERSION } from '../shared/release.js';
 import { normalizeUserHypothesis } from '../shared/hypothesis.js';
 import ResultDashboard from './ResultDashboard.jsx';
+import InternationalApp from './InternationalApp.jsx';
+import { LanguageSwitcher, useLocale } from './locale.jsx';
 import './styles.css';
 import './audit.css';
 import './workspace.css';
@@ -111,7 +113,7 @@ function PlatformDownloads() {
   </section>;
 }
 
-export default function App() {
+function RussianApp() {
   const [url, setUrl] = useState('');
   const [phase, setPhase] = useState('idle');
   const [progress, setProgress] = useState(null);
@@ -410,4 +412,9 @@ export default function App() {
 
     <button className="developer-credit" onClick={() => openLink('https://balanov.pro/')} aria-label="Антон Баланов — открыть balanov.pro"><img src={`${BASE}images/balanov-logo.png`} alt="Антон Баланов" /></button>
   </div>;
+}
+
+export default function App() {
+  const { language } = useLocale();
+  return language === 'ru' ? <><div className="app-language-control"><LanguageSwitcher compact /></div><RussianApp /></> : <InternationalApp />;
 }

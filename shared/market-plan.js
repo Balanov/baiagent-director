@@ -1,3 +1,6 @@
+import { createInternationalMarketSearchPlan, isInternationalCompetitorContent, isInternationalCompetitorPage, isInternationalIndustryEvidence, isRelevantInternationalReview } from './international-market.js';
+import { researchLanguage } from './locale.js';
+
 const SOFTWARE_PRODUCT_PATTERN = /\b(?:saas|software|software as a service|cloud platform|digital products?|mobile apps?|web platform)\b|программн[а-яё]* обеспечени|программн[а-яё]* продукт|справочн[а-яё]* [а-яё-]* ?систем|информационн[а-яё]* (?:систем|продукт|ресурс)|цифров[а-яё]* (?:платформ|продукт|сервис)|облачн[а-яё]* (?:платформ|сервис)|разработчик[а-яё]* (?:программ|систем|платформ|приложен)|онлайн[- ](?:сервис|платформ)|веб[- ](?:сервис|платформ)|мобильн[а-яё]* приложен/i;
 const PROFESSIONAL_SERVICE_MARKETPLACE = /юридическ[а-яё]* услуг[а-яё]*\s+(?:оказывают|предоставляют)[^.!?…]{0,100}(?:исполнител|юрист|адвокат)|независим[а-яё]* исполнител[а-яё]*\s*[-—,:]?\s*(?:юрист|адвокат)|юридическ[а-яё]* компан[а-яё]*\s+на\s+платформе/i;
 const SERVICE_MARKETPLACE_PATTERN = /(?:сервис|платформа|маркетплейс)\s+(?:поиска\s+|подбора\s+)?специалист|поиск\s+специалист|специалисты\s+напишут\s+сами|исполнител[а-яё]*\s+(?:пришлют|предложат)|заказчик[а-яё]*\s+и\s+исполнител/i;
@@ -169,6 +172,8 @@ export function marketSubject(research = {}, profile = {}) {
 }
 
 export function createMarketSearchPlan(research = {}, profile = {}) {
+  const international = createInternationalMarketSearchPlan(research, profile);
+  if (international) return international;
   const { industry, subject } = marketSubject(research, profile);
   const preset = MARKET_PRESETS[industry] || MARKET_PRESETS.professional;
   const productMarket = ['manufacturing', 'retail', 'distribution', 'construction', 'food'].includes(industry) && subject !== 'ресторанный сервис';
@@ -245,6 +250,7 @@ function isEditorialCompetitorPage(item = {}) {
 }
 
 export function isCompetitorContent(text, plan) {
+  if (plan?.language && plan.language !== 'ru') return isInternationalCompetitorContent(text, plan);
   const value = clean(text); const generic = GENERIC_SUBJECTS.has(plan.subject);
   if (!generic && !subjectPattern(plan.subject).test(value)) return false;
   if (generic && !plan.relevance.test(value)) return false;
@@ -280,6 +286,15 @@ export function isCompetitorCandidate(item, plan, siteUrl) {
   const ownBrand = ownHost.split('.')[0];
   const ownNames = [plan.companyName, ownBrand, ...(plan.ownAliases || []), ...(BRAND_ALIASES[ownBrand] || [])].map(value => clean(value).toLowerCase()).filter(value => value.length >= 3);
   if (ownNames.some(name => candidateHost.includes(name) || text.toLowerCase().includes(name))) return false;
+  if (plan.language && plan.language !== 'ru') {
+    const title = clean(item?.title).toLowerCase();
+    const hostLabels = candidateHost.split('.');
+    const ownOfferings = (plan.ownOfferingNames || []).map(value => clean(value).toLowerCase())
+      .filter(name => name.length >= 4 && name.length <= 100 && !/^(?:products?|services?|software|platform|solutions?|home|smart home)$/i.test(name));
+    if (ownOfferings.some(name => title.includes(name) || hostLabels.includes(name.replace(/[^\p{L}\p{N}]+/gu, '')))) return false;
+    if (text.length < 18 || !isInternationalCompetitorContent(text, plan)) return false;
+    return isInternationalCompetitorPage(item);
+  }
   if (plan.industry === 'logistics') {
     const merchantDelivery = /интернет-магазин|мебел|корзина|доставка заказов|оплата и доставка/i.test(text)
       && /отправк[а-яё]*\s+через|доставк[а-яё]*\s+(?:через|транспортн)|транспортными компаниями|другие\s+ТК/i.test(text);
@@ -312,12 +327,14 @@ export function isRelevantMarketNews(item, plan) {
   const published = Date.parse(item?.publishedAt || '');
   const fresh = Number.isFinite(published) && published <= Date.now() + 172800000 && Date.now() - published < 548 * 86400000;
   if (text.length < 20 || !fresh || /как спичк|спички пироманьяку|рассада|рассаду/i.test(text)) return false;
+  if (plan.language && plan.language !== 'ru') return plan.newsSignal.test(text) && plan.relevance.test(text);
   if (plan.serviceMarketplace && !SERVICE_MARKETPLACE_PATTERN.test(text)) return false;
   if (!/рынок|рынк[аеу]|динамик|спрос|производств|завод|фабрик|экспорт|импорт|подорожа|подеше|цен[аыуе]|запуск/i.test(text)) return false;
   return GENERIC_SUBJECTS.has(plan.subject) ? plan.relevance.test(text) : subjectPattern(plan.subject).test(text);
 }
 
 export function isRelevantIndustryEvidence(item, plan, kind) {
+  if (plan?.language && plan.language !== 'ru') return isInternationalIndustryEvidence(item, plan, kind);
   const text = clean(`${item?.title || ''} ${item?.text || ''}`);
   if (text.length < 60) return false;
   if (plan.serviceMarketplace && !SERVICE_MARKETPLACE_PATTERN.test(text)) return false;
@@ -418,6 +435,7 @@ function isProductReviewPage(item, text) {
 export function isRelevantCompanyReview(item = {}, context = {}) {
   const research = context.research || context;
   const sources = context.sources || research.sources || [];
+  if (researchLanguage({ ...research, language: context.language || research.language }) !== 'ru') return isRelevantInternationalReview(item, context, sources);
   const title = normalizedReviewText(item.title);
   const text = normalizedReviewText(`${item.title || ''} ${item.text || ''}`);
   const path = reviewPagePath(item);
@@ -528,7 +546,7 @@ function decodePunycodeLabel(label) {
 
 export function competitorNameFrom(source = {}) {
   const legalForm = /^(?:ООО|АО|ПАО|ЗАО|ИП)\s+/i;
-  const genericTitle = /^(?:(?:логистика|кибербезопасность|доставка|производство|профессиональные услуги|спички|средства для розжига|розжиг)(?:\s+для\s+|$)|(?:аутсорсинг|производитель оптом|производители|услуги|каталог|главная|информационные ресурсы|document|www)|(?:collaboration|project management|team collaboration)(?:\s+(?:software|platform|tool))*)$/i;
+  const genericTitle = /^(?:(?:логистика|кибербезопасность|доставка|производство|профессиональные услуги|спички|средства для розжига|розжиг)(?:\s+для\s+|$)|(?:аутсорсинг|производитель оптом|производители|услуги|каталог|главная|информационные ресурсы|document|www|españa|spain|united states|india|china|россия|ai innovation workspace|task and project management software|project & work management software|transporte y entrega de mercancías)|(?:collaboration|project management|team collaboration)(?:\s+(?:software|platform|tool))*)$/i;
   const normalize = value => {
     const cleaned = clean(value).replace(legalForm, '').replace(/^(?:интернет-магазин|официальный сайт|компания)\s+/i, '').trim();
     const domainLabel = cleaned.match(/^(?:www\.)?([\p{L}\p{N}-]+)\.[a-z]{2,}$/iu)?.[1];
@@ -536,6 +554,18 @@ export function competitorNameFrom(source = {}) {
   };
   const usable = (value, limit = 70) => value.length >= 3 && value.length <= limit && !genericTitle.test(value)
     && !/(?:\.{3}|…)|купить|каталог|цен[аыуе]|стоимост|оптом|доставка|производств|решения для|официальный сайт|рассчита|калькулятор|^www$|^(?:online\s+)?project management\b/i.test(value);
+  const labels = host(source.url).split('.').filter(Boolean);
+  const publicSuffix = /^(?:com|net|org|ru|su|io|ai|co|uk|de|fr|es|it|eu|cn|in|au|br|mx|jp|nl|se|no|fi|pl|cz|sk|ua|kz|by|biz|info|app|dev|cloud|xyz|online|site|shop|store|tech|me|tv|cc|us|ca|ch|at|be|dk|ie|pt|gr|tr|sa|ae|qa|za|gov|edu|mil|xn--[a-z0-9-]+)$/i;
+  const lastLabel = labels.at(-1) || '';
+  const rawDomainBrand = labels.length > 1 && !publicSuffix.test(lastLabel) ? lastLabel : labels.at(-2) || labels[0] || '';
+  const decodedDomainBrand = decodePunycodeLabel(rawDomainBrand);
+  const formatDomainBrand = value => {
+    const brand = decodePunycodeLabel(value) || 'Компания';
+    return brand.length <= 7 ? brand.toUpperCase() : brand;
+  };
+  const domainEscaped = decodedDomainBrand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const domainConfirmed = decodedDomainBrand.length >= 3 && new RegExp(`(?<![\\p{L}\\p{N}])${domainEscaped}(?![\\p{L}\\p{N}])`, 'iu').test(clean(`${source.organizationName || ''} ${source.siteName || ''} ${source.title || ''} ${source.text || ''}`));
+  const descriptiveTitle = /^(?:(?:log[ií]stic[ao]s?|transporte|env[ií]os?|paqueter[ií]a|delivery|shipping|logistics|software|services?|soluciones|solutions?|confiable|reliable|segura|secure|global|internacional|international|express|rápida|fast|calidad|quality|empresarial|business|mercancías|freight|transport|entrega|españa|spain|china|bahrain|bahrein|europe|europa|desde|hasta|de|a|y|from|to|and|логистика|над[её]жн[а-яё]*|доставка|транспорт|услуги|качество|para|empresas|for)\s*)+$/iu;
   const structured = normalize(clean(source.organizationName || source.siteName).split(/[|—–·:\\]|\s+-\s+/)[0]);
   if (usable(structured, 100)) return structured;
   const rawTitle = clean(source.title);
@@ -545,13 +575,11 @@ export function competitorNameFrom(source = {}) {
     .replace(/^(?:тарифы|цены|прайс|стоимость)\s+/i, '')
     .replace(/\s+для\s+(?:бизнеса|компаний|организаций|юристов|бухгалтеров).*$/i, '').trim()).filter(Boolean);
   const titleBrand = titleParts.find(part => usable(part));
-  if (titleBrand) return titleBrand;
+  if (titleBrand && !(descriptiveTitle.test(titleBrand) && !titleBrand.toLocaleLowerCase().includes(decodedDomainBrand.toLocaleLowerCase()))) return titleBrand;
   const acronym = rawTitle.match(/(?:^|\s)([А-ЯЁA-Z][А-ЯЁA-Z0-9-]{2,})(?:$|\s)/)?.[1];
   if (acronym && !/^(?:ООО|АО|ПАО|ЗАО|ИП|WWW)$/i.test(acronym)) return acronym;
-  const parts = host(source.url).split('.').filter(Boolean);
-  const rawBrand = (parts.length > 2 ? parts.at(-2) : parts[0]) || 'Компания';
-  const brand = decodePunycodeLabel(rawBrand);
-  return brand.length <= 7 ? brand.toUpperCase() : brand;
+  const rawBrand = !publicSuffix.test(lastLabel) && !domainConfirmed ? labels.at(-2) || rawDomainBrand : rawDomainBrand;
+  return formatDomainBrand(rawBrand);
 }
 
 export function relevantMarketQuote(source = {}, plan) {

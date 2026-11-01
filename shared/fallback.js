@@ -4,6 +4,8 @@ import { createBusinessProfile, executiveSummary } from './business.js';
 import { enrichAuditOpportunities, PROCESS_PLAYBOOKS, auditIndustryFor } from './audit.js';
 import { classifyEvidence } from './evidence-quality.js';
 import { marketSubject } from './market-plan.js';
+import { researchLanguage } from './locale.js';
+import { createLocalizedAnalysis } from './localized-analysis.js';
 
 function quoteFor(source, pattern, minimumLength = 20) {
   const sentences = source.text.match(/[^.!?…]+[.!?…]?/g) || [source.text];
@@ -204,6 +206,7 @@ function selectPrimaryOffering(market, profile, research, sources) {
 }
 
 export function createEvidenceBasedFallback(sources, requestedUrl = '', research = {}) {
+  if (researchLanguage({ ...research, sources }) !== 'ru') return createLocalizedAnalysis(sources, requestedUrl, research);
   const usable = sources.filter(source => source.text?.length >= 20);
   if (!usable.length) throw new Error('Не удалось получить текст открытых источников');
   const data = { ...research, sources, requestedUrl };
@@ -334,7 +337,7 @@ export function createEvidenceBasedFallback(sources, requestedUrl = '', research
     summary: executiveSummary(data, profile),
     opportunities, swot,
   }, usable);
-  return enrichAnalysisWithAudit({ ...verified, mode: 'evidence-rules', market, profile }, data);
+  return enrichAnalysisWithAudit({ ...verified, language: 'ru', mode: 'evidence-rules', market, profile }, data);
 }
 
 export function enrichAnalysisWithAudit(analysis, research = {}) {

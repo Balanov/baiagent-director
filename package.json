@@ -1,6 +1,6 @@
 {
   "name": "baiagent-director",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "BAIagent — локальный ИИ-советник для бизнеса: аудит по проверяемым источникам, гипотезы и план пилота.",
   "private": true,
   "type": "module",

@@ -1,4 +1,4 @@
-export const DIRECTOR_RELEASE_VERSION = '1.2.0';
+export const DIRECTOR_RELEASE_VERSION = '1.3.0';
 export const ENTERPRISE_RELEASE_VERSION = '1.1.1';
 export const RELEASE_VERSION = DIRECTOR_RELEASE_VERSION;
 export const DIRECTOR_WINDOWS_FILE = `BAIagent-Director-Setup-Windows-${DIRECTOR_RELEASE_VERSION}-x64.exe`;

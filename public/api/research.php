@@ -16,7 +16,7 @@ const MAX_EXTERNAL = 18;
 function encode_json(mixed $value): string {
     return json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR);
 }
-function fail(string $message, int $status = 400): void { http_response_code($status); echo encode_json(['error' => $message]); exit; }
+function fail(string $message, int $status = 400): void { http_response_code($status); echo encode_json(['error' => research_translated_notice($message), 'language' => research_language()]); exit; }
 function rate_limit(): void {
     $ip = (string)($_SERVER['REMOTE_ADDR'] ?? 'unknown');
     $file = sys_get_temp_dir() . '/baiagent-research-' . hash('sha256', $ip) . '.json';
@@ -66,7 +66,7 @@ function fetch_public(string $url, int $redirects = 0): array {
         CURLOPT_RETURNTRANSFER => false, CURLOPT_FOLLOWLOCATION => false, CURLOPT_TIMEOUT => $timeout,
         CURLOPT_CONNECTTIMEOUT => min(6, $timeout), CURLOPT_USERAGENT => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         CURLOPT_PROTOCOLS => CURLPROTO_HTTP | CURLPROTO_HTTPS, CURLOPT_ENCODING => '',
-        CURLOPT_HTTPHEADER => ['Accept: text/html,application/xhtml+xml,application/rss+xml,application/xml,text/xml;q=0.9', 'Accept-Language: ru-RU,ru;q=0.9,en;q=0.7'],
+        CURLOPT_HTTPHEADER => ['Accept: text/html,application/xhtml+xml,application/rss+xml,application/xml,text/xml;q=0.9', 'Accept-Language: ' . RESEARCH_SEARCH_MARKETS[research_language()][0] . ',' . research_language() . ';q=0.9,en;q=0.6'],
         CURLOPT_HEADERFUNCTION => function($ch, $header) use (&$location) { if (stripos($header, 'Location:') === 0) $location = trim(substr($header, 9)); return strlen($header); },
         CURLOPT_WRITEFUNCTION => function($ch, $chunk) use (&$body, &$tooLarge) { if (strlen($body) + strlen($chunk) > MAX_BYTES) { $tooLarge = true; return 0; } $body .= $chunk; return strlen($chunk); },
     ]);
@@ -97,7 +97,7 @@ function element_text(DOMXPath $xpath, DOMElement $element): string {
 function limit_text(string $value, int $length): string { return function_exists('mb_substr') ? mb_substr($value, 0, $length) : substr($value, 0, $length); }
 function lower_text(string $value): string { return function_exists('mb_strtolower') ? mb_strtolower($value) : strtolower($value); }
 function price_pattern(): string {
-    return '/(?:от\s+)?\d{1,3}(?:[ \x{00A0}]\d{3})+(?:[.,]\d{1,2})?\s*(?:\x{20BD}|руб(?:\.|лей|ля)?|RUB|\$|€|USD|EUR)|(?:от\s+)?\d+(?:[.,]\d{1,2})?\s*(?:\x{20BD}|руб(?:\.|лей|ля)?|RUB|\$|€|USD|EUR)/iu';
+    return '/(?:\x{20BD}|руб(?:\.|лей|ля)?|RUB|\$|€|£|¥|₹|USD|EUR|GBP|CNY|RMB|INR|AED|SAR)\s*\d{1,3}(?:[ \x{00A0},]\d{3})*(?:[.,]\d{1,2})?|(?:от\s+|from\s+|desde\s+)?\d{1,3}(?:[ \x{00A0},]\d{3})*(?:[.,]\d{1,2})?\s*(?:\x{20BD}|руб(?:\.|лей|ля)?|RUB|\$|€|£|¥|₹|USD|EUR|GBP|CNY|RMB|INR|AED|SAR|元|卢比|ر\.س|د\.إ)/iu';
 }
 function extract_price(string $value): ?string {
     return preg_match(price_pattern(), $value, $match) ? limit_text(trim($match[0]), 60) : null;
@@ -122,7 +122,7 @@ function offering_name(string $value): string {
     return limit_text($value, 180);
 }
 function useful_offering(string $name): bool {
-    return strlen($name) >= 2 && !in_array(lower_text($name), ['подробнее','узнать больше','купить','заказать','каталог','продукты','услуги','товары','цены','главная','читать далее','перейти','открыть','все услуги','все товары','выбор клиентов','выбор покупателей','акция','хит','скидка','бесплатно'], true) && !preg_match('/^(?:от\s+)?\d+(?:[.,]\d+)?\s*(?:\x{20BD}|руб\.?|RUB|\$|€)$/iu', $name);
+    return strlen($name) >= 2 && !research_generic_offering($name) && !in_array(lower_text($name), ['подробнее','узнать больше','купить','заказать','каталог','продукты','услуги','товары','цены','главная','читать далее','перейти','открыть','все услуги','все товары','выбор клиентов','выбор покупателей','акция','хит','скидка','бесплатно','learn more','read more','get started','contact us','shop now','buy now','advanced search','product registration','add to wish list','add to wishlist','register product','service request','find a store'], true) && !preg_match('/^(?:от\s+)?\d+(?:[.,]\d+)?\s*(?:\x{20BD}|руб\.?|RUB|\$|€)$/iu', $name);
 }
 function covering_quote(string $text, string $name, ?string $price): ?string {
     $nameAt = strpos($text, $name); if ($nameAt === false) return null;
@@ -177,12 +177,18 @@ function page_image_url(DOMXPath $xpath, string $base): ?string {
     }
     return null;
 }
+function component_href(DOMElement $element): string {
+    foreach (['href', 'href-link', 'redirect-url', 'more-info-button-href'] as $attribute) {
+        $value = trim($element->getAttribute($attribute)); if ($value !== '') return $value;
+    }
+    return '';
+}
 function offering_url(DOMXPath $xpath, DOMElement $card, string $base, string $name): ?string {
     $expected = lower_text(clean_text($name)); $candidates = []; $anchors = [];
-    $parent = $xpath->query('ancestor-or-self::a[@href][1]', $card)->item(0); if ($parent) $anchors[] = $parent;
-    foreach ($xpath->query('.//a[@href]', $card) as $anchor) $anchors[] = $anchor;
+    $parent = $xpath->query('ancestor-or-self::*[@href or @href-link or @redirect-url or @more-info-button-href][1]', $card)->item(0); if ($parent) $anchors[] = $parent;
+    foreach ($xpath->query('.//*[@href or @href-link or @redirect-url or @more-info-button-href]', $card) as $anchor) $anchors[] = $anchor;
     foreach ($anchors as $anchor) {
-        $linked = absolute_url($anchor->getAttribute('href'), $base); if (!$linked || parse_url($linked, PHP_URL_HOST) !== parse_url($base, PHP_URL_HOST)) continue;
+        $linked = absolute_url(component_href($anchor), $base); if (!$linked || parse_url($linked, PHP_URL_HOST) !== parse_url($base, PHP_URL_HOST)) continue;
         $text = offering_name(element_text($xpath, $anchor) ?: ($xpath->query('.//img', $anchor)->item(0)?->getAttribute('alt') ?? ''));
         if (!useful_offering($text)) continue;
         $normalized = lower_text($text); $exact = $normalized === $expected; $contains = strlen($expected) >= 4 && str_contains($normalized, $expected);
@@ -225,10 +231,17 @@ function extract_offerings(DOMXPath $xpath, string $body, string $id, string $ur
     if (!$explicitStructured && preg_match('~(?:^|/)(?:ecosystem|partners?|stores?|locations?|pickup-points?|academic|resources?|library|asset-library|learning|curriculum|collections?|enterprise)(?:/|$)~i', $path)) return [];
     $condition = 'self::article or contains(@itemtype,"Product") or contains(@itemtype,"Service") or contains(@class,"product-card") or contains(@class,"product-item") or contains(@class,"product__item") or contains(@class,"category__item") or contains(@class,"catalog-item") or contains(@class,"catalog__item") or contains(@class,"service-card") or contains(@class,"service-item") or contains(@class,"goods-item") or contains(@class,"price-item") or contains(@class,"card-content") or contains(@class,"main-card")';
     $selector = '//*[' . $condition . ']'; $items = []; $seen = [];
-    $commercialPath = (bool)preg_match('~catalog|shop|store|product|goods|service|solution|software|platform|system|price|pricing|каталог|товар|продукт|услуг|сервис|программ|систем|цен|прайс|стоимост~iu', $path);
-    $hasCommercialCards = (bool)$xpath->query('//*[contains(@itemtype,"Product") or contains(@itemtype,"Service") or contains(@class,"product-card") or contains(@class,"product-item") or contains(@class,"product__item") or contains(@class,"category__item") or contains(@class,"catalog-item") or contains(@class,"catalog__item") or contains(@class,"service-card") or contains(@class,"service-item") or contains(@class,"goods-item") or contains(@class,"price-item") or contains(@class,"card-content") or contains(@class,"main-card")]')->length;
+    $commercialPath = (bool)preg_match('~catalog|shop|store|product|goods|service|solution|software|platform|system|price|pricing|cat[aá]logo|tienda|productos?|servicios?|soluciones|env[ií]os?|paquetes?|tarifas?|precios?|产品|服务|解决方案|价格|产品目录|उत्पाद|सेवाएँ|कीमत|منتجات|خدمات|أسعار|каталог|товар|продукт|услуг|сервис|программ|систем|цен|прайс|стоимост~iu', $path);
+    $customCards = [];
+    foreach ($xpath->query('//*') as $element) {
+        $tag = strtolower($element->tagName);
+        if (str_contains($tag, '-') && preg_match('~(?:^|-)(?:product|service|offering)(?:-|$)~', $tag) && !preg_match('~button|link|input|form|action~', $tag)) $customCards[] = $element;
+    }
+    $hasCommercialCards = (bool)$xpath->query('//*[contains(@itemtype,"Product") or contains(@itemtype,"Service") or contains(@class,"product-card") or contains(@class,"product-item") or contains(@class,"product__item") or contains(@class,"category__item") or contains(@class,"catalog-item") or contains(@class,"catalog__item") or contains(@class,"service-card") or contains(@class,"service-item") or contains(@class,"goods-item") or contains(@class,"price-item") or contains(@class,"card-content") or contains(@class,"main-card")]')->length || count($customCards) > 0;
     if ($pageType === 'article' && !$explicitStructured && !($commercialPath && $hasCommercialCards)) return [];
-    foreach ($xpath->query($selector) as $card) {
+    $cards = []; foreach ($xpath->query($selector) as $card) $cards[] = $card;
+    foreach ($customCards as $card) if (!in_array($card, $cards, true)) $cards[] = $card;
+    foreach ($cards as $card) {
         if ($xpath->query('.' . $selector, $card)->length > 0) continue;
         if ($xpath->query('ancestor::*[contains(translate(@class,"PARTNER","partner"),"partner") or contains(translate(@class,"ECOSYSTEM","ecosystem"),"ecosystem")]', $card)->length) continue;
         $text = element_text($xpath, $card);
@@ -281,9 +294,12 @@ function extract_offerings(DOMXPath $xpath, string $body, string $id, string $ur
             $items[] = ['name' => $name, 'displayName' => $name, 'variant' => '', 'kind' => preg_match('~услуг|service~i', $url) ? 'service' : 'product', 'price' => $price, 'image' => $pageImage, 'quote' => $quote ?: covering_quote($body, $name, null) ?: $name, 'sourceId' => $id, 'sourceTitle' => $title, 'url' => $url];
         }
     }
-    if (count($items) === 1 && empty($items[0]['price']) && $commercialPath) {
+    $productHints = path_product_hints($url);
+    if (count($items) === 1 && empty($items[0]['price']) && count($productHints) > 0) {
         $canonical = null; $metadata = $title . ' ' . $body;
-        foreach (path_product_hints($url) as $hint) { $candidate = confirmed_name($metadata, $hint); if ($candidate && useful_offering($candidate)) { $canonical = $candidate; break; } }
+        $titleName = offering_name(preg_split('/[|—–:]/u', $title)[0]);
+        if (text_length($titleName) <= 96 && count(preg_split('/\s+/u', $titleName)) <= 10 && useful_offering($titleName) && !preg_match('/[.!?]/u', $titleName) && confirmed_name($body, $titleName)) $canonical = $titleName;
+        if (!$canonical) foreach ($productHints as $hint) { $candidate = confirmed_name($metadata, $hint); if ($candidate && useful_offering($candidate)) { $canonical = $candidate; break; } }
         if ($canonical) {
             $quote = covering_quote($body, $canonical, null);
             if ($quote) { $items[0]['name'] = $canonical; $items[0]['displayName'] = $canonical; $items[0]['quote'] = $quote; }
@@ -362,7 +378,18 @@ function parse_page(string $html, string $url, string $id): array {
     if ($logoConfidence === 'favicon') $warnings[] = 'Логотип определён только по favicon; визуальное соответствие бренду не подтверждено.';
     if (!$logo && $xpath->query('//img')->length) $warnings[] = 'Логотип не определён: изображения без явных признаков бренда не используются.';
     $headings = []; foreach ($xpath->query('//h1|//h2|//h3') as $heading) { $value = clean_text($heading->textContent); if ($value) $headings[] = $value; if (count($headings) >= 60) break; }
-    $links = []; foreach ($xpath->query('//a[@href]') as $anchor) $links[] = ['href' => $anchor->getAttribute('href'), 'text' => clean_text($anchor->textContent)];
+    $links = []; foreach ($xpath->query('//*[@href or @href-link or @redirect-url or @more-info-button-href]') as $anchor) {
+        $href = component_href($anchor); if ($href === '') continue;
+        $text = clean_text($anchor->textContent) ?: clean_text($anchor->getAttribute('title') ?: $anchor->getAttribute('button-text'));
+        $links[] = ['href' => $href, 'text' => $text];
+    }
+    $businessOfferings = [];
+    if (preg_match('~our businesses|美的业务~iu', limit_text(clean_text($dom->textContent), 3000))) foreach ($links as $link) {
+        $name = offering_name($link['text']); $linked = absolute_url((string)$link['href'], $url);
+        if (!useful_offering($name) || text_length($name) > 64 || count(preg_split('/\s+/u', $name)) > 6 || preg_match('~^(?:overview|professional platforms|总览|专业平台)$~iu', $name)) continue;
+        if (!$linked || parse_url($linked, PHP_URL_HOST) !== parse_url($url, PHP_URL_HOST) || !preg_match('~/our-businesses/~iu', (string)parse_url($linked, PHP_URL_PATH))) continue;
+        $businessOfferings[] = ['name' => $name, 'displayName' => $name, 'variant' => '', 'kind' => 'service', 'price' => null, 'image' => null, 'quote' => $name, 'sourceId' => $id, 'sourceTitle' => $title, 'url' => $linked];
+    }
     $structuredOffering = (bool)$xpath->query('//*[contains(@itemtype,"Product") or contains(@itemtype,"Service")]')->length;
     foreach ($structured as $item) if (preg_match('~Product|Service|SoftwareApplication~i', structured_type($item))) $structuredOffering = true;
     $challenge = (bool)preg_match('~servicepipe\.tech|<js-challenge-loader|js[-_ ]challenge|checking your browser|проверка браузера|cf-chl|__cf_chl|ddos-?guard|enable javascript|включите javascript~i', $html);
@@ -373,8 +400,16 @@ function parse_page(string $html, string $url, string $id): array {
     elseif ($accessIssue === 'empty-shell') $warnings[] = 'Страница не содержит доступного текста: содержимое сайта не было получено.';
     $pageImage = page_image_url($xpath, $url);
     $offerings = $accessIssue === 'javascript-challenge' ? [] : extract_offerings($xpath, $body, $id, $url, $title, $pageImage, $pageType, $structuredOffering);
+    if (!$offerings && $businessOfferings) {
+        $offerings = $businessOfferings;
+        $headings = array_merge($headings, array_column($businessOfferings, 'name'));
+    }
+    $ownBrand = site_identity($url)['brand'];
+    $offerings = array_values(array_filter($offerings, fn($offering) => romanize_brand((string)$offering['name']) !== romanize_brand($ownBrand)));
     libxml_clear_errors(); libxml_use_internal_errors($previous);
-    return ['id' => $id, 'kind' => 'company-site', 'url' => $url, 'title' => limit_text($title ?: parse_url($url, PHP_URL_HOST), 200), 'siteName' => $siteName, 'organizationName' => $organizationName, 'logo' => $logo, 'logoConfidence' => $logoConfidence, 'logoUncertainty' => $logoConfidence === 'favicon', 'pageType' => $pageType, 'ogType' => $ogType ?: null, 'schemaTypes' => array_values(array_unique($schemaTypes)), 'pageImage' => $pageImage, 'contentOrigin' => 'full-page', 'text' => limit_text(implode('. ', array_filter([$description, implode('. ', $headings), $body])), 32000), 'offerings' => $offerings, 'links' => $links, 'warnings' => array_values(array_unique($warnings)), 'accessIssue' => $accessIssue, 'retrievedAt' => gmdate('c')];
+    $declaredLanguage = $xpath->query('//html[@lang]')->item(0)?->getAttribute('lang') ?? '';
+    $contentLanguage = research_detect_language($declaredLanguage, $body);
+    return ['id' => $id, 'kind' => 'company-site', 'url' => $url, 'title' => limit_text($title ?: parse_url($url, PHP_URL_HOST), 200), 'siteName' => $siteName, 'organizationName' => $organizationName, 'logo' => $logo, 'logoConfidence' => $logoConfidence, 'logoUncertainty' => $logoConfidence === 'favicon', 'pageType' => $pageType, 'ogType' => $ogType ?: null, 'schemaTypes' => array_values(array_unique($schemaTypes)), 'pageImage' => $pageImage, 'contentOrigin' => 'full-page', 'language' => $contentLanguage, 'declaredLanguage' => $declaredLanguage ?: null, 'text' => limit_text(implode('. ', array_filter([$description, implode('. ', $headings), $body])), 32000), 'offerings' => $offerings, 'links' => $links, 'warnings' => array_values(array_unique($warnings)), 'accessIssue' => $accessIssue, 'retrievedAt' => gmdate('c')];
 }
 function absolute_url(string $href, string $base): ?string {
     if ($href === '' || str_starts_with($href, '#') || preg_match('~^(mailto|tel|javascript):~i', $href)) return null;
@@ -388,12 +423,13 @@ function absolute_url(string $href, string $base): ?string {
 }
 function site_identity(string $site): array {
     $host = strtolower(preg_replace('~^www\.~', '', parse_url($site, PHP_URL_HOST) ?: ''));
-    $parts = explode('.', $host); $base = count($parts) > 2 ? implode('.', array_slice($parts, -2)) : $host;
+    $parts = explode('.', $host); $compound = (bool)preg_match('/^(?:com|net|org|co|gov|edu)\.[a-z]{2}$/i', implode('.', array_slice($parts, -2)));
+    $length = $compound ? 3 : 2; $base = count($parts) > $length ? implode('.', array_slice($parts, -$length)) : $host;
     return ['host' => $host, 'base' => $base, 'brand' => explode('.', $base)[0] ?: $base];
 }
 function generic_company_name(string $value): bool {
     $name = preg_replace('/[«»"\'“”]/u', '', lower_text(clean_text($value)));
-    $generic = ['ai','a.i.','ии','home','homepage','website','главная','официальный сайт','официальный'];
+    $generic = ['ai','a.i.','ии','home','homepage','website','главная','официальный сайт','официальный','english','中文','español','हिन्दी','العربية','products','product','services','service','contact','about us'];
     return in_array($name, $generic, true) || (bool)preg_match('/^(?:(?:официальн[а-яё]*\s+)?сайт(?:\s+(?:компании|организации))?\s+)?(?:ооо|ао|пао|зао|ип|оао)$/iu', $name);
 }
 function romanize_brand(string $value): string {
@@ -402,6 +438,7 @@ function romanize_brand(string $value): string {
 }
 function hostname_confirmed_brand(string $value, string $brand): ?string {
     $candidate = trim(preg_replace('/^[«“”"\']|[»“”"\']$/u', '', preg_replace('~^(?:ООО|АО|ПАО|ЗАО|ИП|ОАО)\s+~iu', '', clean_text($value))) ?? '');
+    $candidate = trim(preg_replace("~^(?:about|welcome\\s+to)\\s+|(?:['’]s)?\\s+(?:service|services|official\\s+website|homepage)$~iu", '', $candidate) ?? '');
     $hostnameBrand = romanize_brand($brand); $candidateBrand = romanize_brand($candidate);
     if (text_length($candidate) < 3 || text_length($candidate) > 70 || count(preg_split('/\s+/u', $candidate)) > 5 || generic_company_name($candidate)
         || preg_match('/^(?:www\.)?[\w.-]+\.[a-z]{2,}$/i', $candidate)
@@ -453,6 +490,11 @@ function company_name_from_pages(array $sources, string $requested): string {
         $confirmed = hostname_confirmed_brand($structured, $brand); if ($confirmed) return $confirmed;
         if (strlen($structured) >= 3 && !generic_company_name($structured)) return $structured;
     }
+    foreach ($own as $source) {
+        if (preg_match('~(?:^|[^\p{L}\p{N}])(' . preg_quote($brand, '~') . '(?:\s+(?:Group|Corporation|Company|Ltd\.?|Limited|Inc\.?))?)(?=$|[^\p{L}\p{N}])~iu', clean_text((string)($source['text'] ?? '')), $match)) {
+            $confirmed = hostname_confirmed_brand($match[1], $brand); if ($confirmed) return $confirmed;
+        }
+    }
     foreach ($own as $source) { $confirmed = title_brand($source, $brand); if ($confirmed) return $confirmed; }
     return company_name_from($own[0] ?? [], $requested);
 }
@@ -486,12 +528,13 @@ function offering_mentioned(string $name, string $title, string $description): b
     return true;
 }
 function search_provider(string $query): array {
-    $cache = sys_get_temp_dir() . '/baiagent-search-v3-' . hash('sha256', $query) . '.json';
+    $language = research_language(); [$tag, $country, $interface] = RESEARCH_SEARCH_MARKETS[$language];
+    $cache = sys_get_temp_dir() . '/baiagent-search-v4-' . hash('sha256', $language . ':' . $query) . '.json';
     if (is_file($cache) && time() - filemtime($cache) < 900) { $cached = json_decode((string)file_get_contents($cache), true); if (is_array($cached)) return $cached; }
     if (research_budget(12)) return [];
     $items = [];
     try {
-        $result = fetch_public('https://search.lumy.live/search?q=' . rawurlencode($query) . '&format=json&language=ru-RU&categories=general');
+        $result = fetch_public('https://search.lumy.live/search?q=' . rawurlencode($query) . '&format=json&language=' . rawurlencode($tag) . '&categories=general');
         $data = json_decode($result['body'], true, 512, JSON_THROW_ON_ERROR);
         foreach ($data['results'] ?? [] as $item) {
             $title = clean_text((string)($item['title'] ?? '')); $link = clean_text((string)($item['url'] ?? '')); $description = clean_text((string)($item['content'] ?? ''));
@@ -499,27 +542,27 @@ function search_provider(string $query): array {
         }
     } catch (Throwable $error) { /* Use the second provider when metasearch is unavailable. */ }
     if (!$items) {
-        $result = fetch_public('https://www.bing.com/search?format=rss&mkt=ru-RU&cc=ru&setlang=ru&q=' . rawurlencode($query)); $xml = @simplexml_load_string($result['body']);
+        $result = fetch_public('https://www.bing.com/search?format=rss&mkt=' . rawurlencode($tag) . '&cc=' . rawurlencode($country) . '&setlang=' . rawurlencode($interface) . '&q=' . rawurlencode($query)); $xml = @simplexml_load_string($result['body']);
         if ($xml) foreach ($xml->channel->item as $item) $items[] = ['title' => limit_text(clean_text((string)$item->title), 200), 'url' => clean_text((string)$item->link), 'text' => limit_text(clean_text((string)$item->description), 3000)];
     }
     if ($items) @file_put_contents($cache, json_encode($items, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), LOCK_EX);
     return $items;
 }
 function search_reference_web(string $company): array {
-    $items = [];
+    $items = []; $language = research_language(); [, $country, $interface, $ceid] = RESEARCH_SEARCH_MARKETS[$language];
     try {
-        $result = fetch_public('https://ru.wikipedia.org/w/api.php?action=query&list=search&srsearch=' . rawurlencode($company) . '&format=json&utf8=1&srlimit=3');
+        $result = fetch_public('https://' . $language . '.wikipedia.org/w/api.php?action=query&list=search&srsearch=' . rawurlencode($company) . '&format=json&utf8=1&srlimit=3');
         $data = json_decode($result['body'], true); $search = $data['query']['search'] ?? [];
         foreach ($search as $index => $entry) {
             $title = clean_text((string)($entry['title'] ?? '')); $text = clean_text((string)($entry['snippet'] ?? ''));
             $direct = strlen($company) >= 4 && str_contains(lower_text($title), lower_text($company));
             $latinAlias = $index === 0 && preg_match('/^[A-Z0-9-]{4,}$/', $company);
-            if (($direct || $latinAlias) && $text) $items[] = ['title' => $title . ' — Википедия', 'url' => 'https://ru.wikipedia.org/wiki/' . rawurlencode(str_replace(' ', '_', $title)), 'text' => $text];
+            if (($direct || $latinAlias) && $text) $items[] = ['title' => $title . ' — Wikipedia', 'url' => 'https://' . $language . '.wikipedia.org/wiki/' . rawurlencode(str_replace(' ', '_', $title)), 'text' => $text];
         }
     } catch (Throwable $error) { /* Reference search is optional. */ }
     try {
         usleep(900000);
-        $result = fetch_public('https://news.google.com/rss/search?q=' . rawurlencode('"' . $company . '"') . '&hl=ru&gl=RU&ceid=RU:ru');
+        $result = fetch_public('https://news.google.com/rss/search?q=' . rawurlencode('"' . $company . '"') . '&hl=' . rawurlencode($interface) . '&gl=' . rawurlencode($country) . '&ceid=' . rawurlencode($ceid));
         $xml = @simplexml_load_string($result['body']);
         if ($xml) foreach ($xml->channel->item as $entry) {
             $title = clean_text((string)$entry->title); $url = clean_text((string)$entry->link); $text = clean_text((string)$entry->description) ?: $title;
@@ -540,10 +583,10 @@ function search_web(string $company, string $site, array $offerings, array $comp
     $add = function(array $item, string $kind, string $offeringName = '') use (&$items, &$seen): void {
         if (empty($item['url']) || isset($seen[$item['url']]) || excluded_web_source_url((string)$item['url'])) return;
         $seen[$item['url']] = true;
-        $items[] = ['id' => 'web-pending', 'kind' => $kind, 'offeringName' => $offeringName ?: null, 'url' => $item['url'], 'title' => $item['title'], 'text' => $item['text'], 'publishedAt' => $item['publishedAt'] ?? null, 'contentOrigin' => 'search-snippet', 'retrievedAt' => gmdate('c')];
+        $items[] = ['id' => 'web-pending', 'kind' => $kind, 'offeringName' => $offeringName ?: null, 'url' => $item['url'], 'title' => $item['title'], 'text' => $item['text'], 'language' => research_language(), 'publishedAt' => $item['publishedAt'] ?? null, 'contentOrigin' => 'search-snippet', 'retrievedAt' => gmdate('c')];
     };
-    $searches = 0;
-    foreach (['"' . $searchName . '" отзывы рейтинг', '"' . $searchName . '" отзывы Яндекс Карты', '"' . $searchName . '"', '"' . $searchName . '" клиенты партнеры новости'] as $query) {
+    $searches = 0; $companyQueries = company_research_queries($searchName, research_language());
+    foreach ($companyQueries as $query) {
         try {
             if ($searches++) usleep(900000);
             foreach (search_provider($query) as $item) {
@@ -559,7 +602,8 @@ function search_web(string $company, string $site, array $offerings, array $comp
     if (!array_filter($items, fn($item) => $item['kind'] === 'review-snippet')) {
         try {
             if ($searches++) usleep(900000);
-            foreach (search_provider('"' . $searchName . '" отзывы клиентов Яндекс 2ГИС') as $item) {
+            $fallbackReviewQuery = research_language() === 'ru' ? '"' . $searchName . '" отзывы клиентов Яндекс 2ГИС' : '"' . $searchName . '" ' . international_copy(research_language())['reviews'][3];
+            foreach (search_provider($fallbackReviewQuery) as $item) {
                 if (empty($item['title']) || empty($item['text']) || company_owned_url($item['url'], $identity) || !relevant_search_result($item['title'], $item['url'], $item['text'], $site, $company) || !$reviewRelevant($item)) continue;
                 $add($item, 'review-snippet');
             }
@@ -614,7 +658,7 @@ function search_web(string $company, string $site, array $offerings, array $comp
         foreach ($hasReviews ? ['alternatives'] : ['reviews', 'alternatives'] as $mode) {
             try {
                 if ($searches++) usleep(900000);
-                $query = $mode === 'reviews' ? '"' . $name . '" отзывы цена' : '"' . $name . '" купить цена аналог';
+                $query = product_research_query($name, $mode, research_language());
                 foreach (search_provider($query) as $item) {
                     if (empty($item['title']) || empty($item['text']) || company_owned_url($item['url'], $identity) || !offering_mentioned($name, $item['title'], $item['text'])) continue;
                     if ($mode === 'reviews' && !$reviewRelevant($item)) continue;
@@ -624,7 +668,14 @@ function search_web(string $company, string $site, array $offerings, array $comp
         }
     }
     if (research_budget(12)) $warnings[] = 'Не все внешние источники изучены: достигнут общий лимит времени исследования.';
-    $items = array_slice($items, 0, 40); foreach ($items as $index => &$item) $item['id'] = 'web-' . ($index + 1); unset($item);
+    $sourceQuotas = ['competitor-candidate' => 12, 'review-snippet' => 10, 'news-snippet' => 10, 'industry-snippet' => 8, 'customer-snippet' => 8, 'market-price-snippet' => 8, 'alternative-snippet' => 8, 'search-snippet' => 20];
+    $selectedSources = []; $chosenSources = [];
+    foreach ($sourceQuotas as $kind => $quota) {
+        $accepted = 0;
+        foreach ($items as $index => $source) if ($source['kind'] === $kind && $accepted++ < $quota) { $chosenSources[$index] = true; $selectedSources[] = $source; }
+    }
+    foreach ($items as $index => $source) if (!isset($chosenSources[$index])) $selectedSources[] = $source;
+    $items = array_slice($selectedSources, 0, 40); foreach ($items as $index => &$item) $item['id'] = 'web-' . ($index + 1); unset($item);
     return [$items, array_values(array_unique($warnings)), $plan];
 }
 function enrich_external(array &$web, string $site, array $plan, array &$warnings, array $reviewContext = []): array {
@@ -661,7 +712,7 @@ function enrich_external(array &$web, string $site, array $plan, array &$warning
                 $mixedEmploymentReviews = preg_match('~отзыв[а-яё]* сотрудник|отзыв[а-яё]* о работодател|условия труда|зарплат|карьерных возможност~iu', $parsed['text']);
                 // Keep only the verified company rating, not an employee's review presented as customer experience.
                 if ($source['kind'] === 'review-snippet' && $mapProfile && $mixedEmploymentReviews && preg_match('~\d+\s*(?:отзыв|reviews?)~iu', $source['text'])) continue;
-                $source['text'] = $parsed['text']; $source['contentOrigin'] = 'full-page'; $source['retrievedAt'] = gmdate('c');
+                $source['text'] = $parsed['text']; $source['language'] = $parsed['language']; $source['declaredLanguage'] = $parsed['declaredLanguage']; $source['contentOrigin'] = 'full-page'; $source['retrievedAt'] = gmdate('c');
                 if ($source['kind'] === 'review-snippet' && (!is_review_material($source) || !is_relevant_company_review($source, $reviewContext))) { $source['discard'] = true; continue; }
                 if ($source['kind'] === 'competitor-candidate') {
                     if (!market_candidate($source, $plan, $site) || !market_competitor_content($source['text'], $plan)) { $source['discard'] = true; continue; }
@@ -685,6 +736,7 @@ function resolved_research_warnings(array $warnings, ?string $logoConfidence): a
 }
 
 try {
+    research_set_language((string)($_GET['lang'] ?? ''), (string)($_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? ''));
     rate_limit();
     $GLOBALS['research_deadline'] = microtime(true) + 110.0;
     $researchWarnings = [];
@@ -706,8 +758,8 @@ try {
             if (isset($queued[$absolute]) || ($parts['host'] ?? '') !== parse_url($base, PHP_URL_HOST)) continue;
             if (preg_match('~\.(?:xlsx?|docx?|pdf|zip|exe|apk|png|jpe?g|svg|webp|mp4)(?:$|\?)~i', $absolute) || preg_match('~login|signin|cart|checkout|личный|войти|корзин~iu', $absolute)) continue;
             $label = $absolute . ' ' . ($link['text'] ?? '');
-            $commercial = preg_match('~catalog|shop|store|product|goods|service|solution|software|platform|system|price|pricing|каталог|товар|продукт|услуг|сервис|программ|систем|цен|прайс|стоимост~iu', $label);
-            $secondary = preg_match('~about|company|contact|о-нас|компан|контакт~iu', $label);
+            $commercial = preg_match('~catalog|shop|store|product|goods|service|solution|software|platform|system|price|pricing|cat[aá]logo|tienda|productos?|servicios?|soluciones|env[ií]os?|paquetes?|tarifas?|precios?|产品|服务|解决方案|价格|产品目录|उत्पाद|सेवाएँ|कीमत|منتجات|خدمات|أسعار|каталог|товар|продукт|услуг|сервис|программ|систем|цен|прайс|стоимост~iu', $label);
+            $secondary = preg_match('~about|company|contact|empresa|contacto|nosotros|公司|关于|联系|关于我们|कंपनी|संपर्क|حول|اتصل|о-нас|компан|контакт~iu', $label);
             $process = preg_match('~appointment|schedule|prepare|regulation|protocol|запис|расписан|подготовк|напоминан|спецификац|регламент|инструкц|при[её]м~iu', $label);
             if (!$commercial && !$secondary && !$process) continue;
             $queued[$absolute] = true;
@@ -754,7 +806,9 @@ try {
     $alternatives = enrich_external($web, $home['url'], $plan, $warnings, $reviewContext); $identity = site_identity($home['url']);
     $web = array_values(array_filter($web, fn($source) => empty($source['discard']) && !company_owned_url($source['url'], $identity) && !str_contains(lower_text($source['title']), $identity['base']) && ($source['kind'] !== 'review-snippet' || (is_review_material($source) && is_relevant_company_review($source, $reviewContext)))));
     if ($first['accessIssue'] || text_length(clean_text($first['text'])) < 40) $siteWarnings[] = 'Содержимое главной страницы недоступно; профиль компании опирается на внешние источники, а не на успешный аудит сайта.';
-    $warnings = resolved_research_warnings(array_merge($researchWarnings, $siteWarnings, $warnings), $companyLogoConfidence);
+    $warnings = array_map('research_translated_notice', resolved_research_warnings(array_merge($researchWarnings, $siteWarnings, $warnings), $companyLogoConfidence));
+    foreach ($sources as &$source) if (!empty($source['warnings'])) $source['warnings'] = array_values(array_unique(array_map('research_translated_notice', $source['warnings'])));
+    unset($source);
     $sources = array_merge($sources, $web); $reviews = []; $competitors = []; $competitorHosts = []; $news = [];
     foreach ($web as $source) {
         if ($source['kind'] === 'review-snippet') $reviews[] = ['sourceId' => $source['id'], 'sourceTitle' => $source['title'], 'url' => $source['url'], 'quote' => limit_text($source['text'], 900), 'offeringName' => $source['offeringName'] ?? null];
@@ -767,5 +821,5 @@ try {
     }
     $competitors = array_slice($competitors, 0, 12); $news = array_slice($news, 0, 8);
     if (!array_filter($sources, fn($source) => strlen($source['text']) >= 20)) fail('Не удалось получить текст открытых источников', 422);
-    echo encode_json(['requestedUrl' => $home['url'], 'companyName' => $company, 'companyLogo' => $companyLogo, 'sources' => $sources, 'offerings' => $offerings, 'reviews' => $reviews, 'competitors' => $competitors, 'news' => $news, 'alternatives' => array_slice($alternatives, 0, 30), 'marketContext' => ['industry' => $plan['industry'], 'subject' => $plan['subject']], 'coverage' => ['pages' => count($sources) - count($web), 'deepened' => $deepened, 'external' => count($web)], 'warnings' => $warnings, 'createdAt' => gmdate('c')]);
+    echo encode_json(['requestedUrl' => $home['url'], 'language' => research_language(), 'companyName' => $company, 'companyLogo' => $companyLogo, 'sources' => $sources, 'offerings' => $offerings, 'reviews' => $reviews, 'competitors' => $competitors, 'news' => $news, 'alternatives' => array_slice($alternatives, 0, 30), 'marketContext' => ['industry' => $plan['industry'], 'subject' => $plan['subject']], 'coverage' => ['pages' => count($sources) - count($web), 'deepened' => $deepened, 'external' => count($web)], 'warnings' => $warnings, 'createdAt' => gmdate('c')]);
 } catch (Throwable $error) { fail($error->getMessage(), 422); }
