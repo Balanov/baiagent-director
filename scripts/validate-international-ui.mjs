@@ -95,11 +95,13 @@ try {
       lang: document.documentElement.lang,
       dir: document.documentElement.dir,
       overflow: document.documentElement.scrollWidth > window.innerWidth + 1,
-      download: document.querySelector('a[href*="BAIagent-Director-Setup-Windows"]')?.href || ''
+      download: document.querySelector('a[href*="BAIagent-Director-Setup-Windows"]')?.href || '',
+      rubleZeroRemnant: document.body.innerText.includes('0 ₽')
     }))()`);
     assert.equal(initial.lang.split('-')[0], language, `${language}: исходный язык`);
     assert.equal(initial.dir, language === 'ar' ? 'rtl' : 'ltr', `${language}: исходное направление`);
     assert.equal(initial.overflow, false, `${language}: переполнение начальной страницы`);
+    assert.equal(initial.rubleZeroRemnant, language === 'ru', `${language}: нулевая цена осталась в рублях`);
     assert.ok(initial.download.includes('1.3.0'), `${language}: старая ссылка на установщик`);
     assert.equal(await setInput('form input', targets[language]), true, `${language}: поле сайта`);
     await evaluate("document.querySelector('form').requestSubmit()");
@@ -148,6 +150,7 @@ try {
       await click('.advisor-next');
       await waitFor("document.querySelector('.pilot-card-list')");
       assert.equal(await evaluate("document.querySelectorAll('.pilot-card-list article').length"), 3, `${language}: структура пилота`);
+      assert.equal(await evaluate("document.body.innerText.includes('0 ₽')"), language === 'ru', `${language}: рублевая нулевая цена в пилоте`);
       const pilot = await layout();
       assertLayout(pilot, language, 'desktop/pilot');
       results.push({ language, step: 'pilot', viewport: 'desktop', ...pilot });

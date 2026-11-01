@@ -13,9 +13,21 @@ function initialLanguage() {
   return preferredLanguage({ explicit: query, stored, browser: window.navigator.languages?.join(',') || window.navigator.language });
 }
 
+const ZERO_CURRENCIES = Object.freeze({ ru: 'RUB', en: 'USD', zh: 'CNY', hi: 'INR', es: 'EUR', ar: 'SAR' });
+
+export function localizeZeroPrice(language, text) {
+  const normalized = normalizeLanguage(language);
+  if (normalized === 'ru') return String(text);
+  const zero = new Intl.NumberFormat(localeTag(normalized), {
+    style: 'currency', currency: ZERO_CURRENCIES[normalized], maximumFractionDigits: 0,
+  }).format(0);
+  return String(text).replaceAll('0 ₽', zero);
+}
+
 function translate(language, key, params = {}) {
   const template = UI_TRANSLATIONS[language]?.[key] ?? UI_TRANSLATIONS.en[key] ?? UI_TRANSLATIONS.ru[key] ?? key;
-  return String(template).replace(/\{(\w+)\}/g, (match, name) => params[name] === undefined ? match : String(params[name]));
+  const text = String(template).replace(/\{(\w+)\}/g, (match, name) => params[name] === undefined ? match : String(params[name]));
+  return localizeZeroPrice(language, text);
 }
 
 export function LocaleProvider({ children }) {
