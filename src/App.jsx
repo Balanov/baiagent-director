@@ -8,6 +8,8 @@ import { DIRECTOR_WINDOWS_DOWNLOAD, ENTERPRISE_WINDOWS_DOWNLOAD, DIRECTOR_RELEAS
 import { normalizeUserHypothesis } from '../shared/hypothesis.js';
 import ResultDashboard from './ResultDashboard.jsx';
 import InternationalApp from './InternationalApp.jsx';
+import OwnEcosystemResult from './OwnEcosystemResult.jsx';
+import { isOwnEcosystemWebsite } from '../shared/own-ecosystem.js';
 import { LanguageSwitcher, useLocale } from './locale.jsx';
 import './styles.css';
 import './audit.css';
@@ -172,6 +174,10 @@ function RussianApp() {
     const targetUrl = String(requestedUrl || url).trim();
     if (!targetUrl || phase === 'working') return;
     setUrl(targetUrl);
+    if (isOwnEcosystemWebsite(targetUrl)) {
+      setPhase('own'); setError(''); setResult(null); setSelectedId(null); setSaved(false); setProgress(null); setActivityLog([]);
+      return;
+    }
     setPhase('working'); setError(''); setResult(null); setSelectedId(null); setSaved(false); setProgress(null); setActivityLog([]); setDisplayedPercent(2);
     try {
       const data = DESKTOP ? await window.director.research(targetUrl) : await researchOnWeb(targetUrl, setProgress);
@@ -402,6 +408,8 @@ function RussianApp() {
         <div className="activity-note"><ShieldCheck size={18} /> Я сам соберу данные, свяжу выводы с источниками и покажу результат.</div>
       </section>
     </main>}
+
+    {phase === 'own' && <OwnEcosystemResult onReset={reset} />}
 
     {phase === 'result' && result && selected && <ResultDashboard
       result={result} selected={selected} onSelect={id => { setSelectedId(id); setSaved(false); }}

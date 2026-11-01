@@ -66,6 +66,30 @@ const ar = {
   'drawer.company': 'ملف الشركة والملخص الإداري', 'drawer.offerings': 'منتجات وخدمات بمصادر دقيقة', 'drawer.offering': 'بطاقة العرض', 'drawer.reviews': 'المراجعات والتقييمات وتجربة العملاء', 'drawer.competitors': 'المشهد التنافسي المباشر', 'drawer.news': 'إشارات القطاع وديناميكياته', 'drawer.mentions': 'إشارات مستقلة إلى الشركة', 'drawer.market': 'صورة السوق وحدود الاستنتاجات', 'drawer.swot': 'SWOT استناداً إلى مواد موثقة', 'drawer.sources': 'جميع مواد البحث', 'drawer.plan': 'العملية والقبول ومعايير النتيجة', 'drawer.documents': 'رؤى إضافية من بياناتك', 'drawer.sourceData': 'بيانات المصادر', 'drawer.whatDoes': 'نشاط الشركة', 'drawer.audience': 'الفئات المستهدفة', 'drawer.collected': 'تم جمعه', 'drawer.openCompany': 'فتح موقع الشركة', 'drawer.openOriginal': 'فتح البطاقة الأصلية', 'drawer.openSource': 'فتح المصدر', 'drawer.openEvidence': 'فتح الدليل', 'drawer.ownMaterials': 'موادي', 'drawer.webMaterials': 'الويب', 'drawer.localDocument': 'مستند على الجهاز', 'drawer.companySite': 'موقع الشركة', 'drawer.competitorSite': 'موقع المنافس', 'drawer.industryNews': 'أخبار القطاع', 'drawer.externalSource': 'مصدر خارجي عام', 'drawer.fullPage': 'قُرئت الصفحة كاملة', 'drawer.searchSnippet': 'مقتطف بحث', 'drawer.pageContent': 'محتوى الصفحة', 'drawer.accessed': 'تم الوصول {date}', 'drawer.noDate': 'التاريخ غير محدد', 'drawer.hypothesisTag': 'حل قابل للاختبار لا نتيجة موعودة', 'drawer.whyHere': 'أهميته هنا', 'drawer.whatDo': 'ما سنفعله', 'drawer.implementation': 'خطة التنفيذ', 'drawer.metric': 'المقياس', 'drawer.pilotFrame': 'إطار التجربة القابلة للقياس', 'drawer.period': 'فترة المراقبة', 'drawer.data': 'البيانات', 'drawer.integrations': 'الاتصالات', 'drawer.owner': 'المسؤول', 'drawer.humanControl': 'الرقابة البشرية', 'drawer.effect': 'حساب الأثر', 'drawer.stop': 'الإيقاف', 'drawer.scale': 'التوسع', 'drawer.evidence': 'الأدلة', 'drawer.unknowns': 'ما يحتاج إلى توضيح', 'drawer.emptyOfferings': 'لم توجد بطاقات محددة في الصفحات التي راجعناها. أضف كتالوج الشركة أو قائمة الأسعار.', 'drawer.emptyCompetitors': 'لم تتأكد مواقع منافسين مباشرين في هذا التشغيل. هذا قيد بحث لا دليل على غياب المنافسة.', 'drawer.emptyReviews': 'لم توجد مراجعات موثقة في هذا التشغيل. هذا قيد بحث لا استنتاج عن السمعة.', 'drawer.emptyMentions': 'لم توجد إشارات مستقلة للشركة في هذا التشغيل. هذا قيد في تغطية البحث.', 'drawer.emptyAlternatives': 'لم توجد عروض قابلة للمقارنة مدعومة بمقتطفات.', 'drawer.swotEmpty': 'لا توجد بيانات موثقة كافية لعنصر مستقل.',
 };
 
+const OWN_ECOSYSTEM = {
+  zh: {
+    'own.kicker': 'BAIagent 团队的彩蛋',
+    'own.title': '不可思议！',
+    'own.message': '也许这是唯一一家没有增长空间的公司——一切已经完美！:)',
+    'own.action': '分析另一家公司',
+    'own.note': '我们认出了自家产品。这是友好的玩笑，不是审计结果。',
+  },
+  hi: {
+    'own.kicker': 'BAIagent टीम का ईस्टर एग',
+    'own.title': 'ऐसा हो नहीं सकता!',
+    'own.message': 'शायद यही एकमात्र कंपनी है जिसमें बढ़ने की कोई गुंजाइश नहीं — सब कुछ पहले से बिल्कुल सही है! :)',
+    'own.action': 'दूसरी कंपनी जाँचें',
+    'own.note': 'हमने अपना उत्पाद पहचान लिया। यह दोस्ताना मज़ाक है, ऑडिट का नतीजा नहीं।',
+  },
+  ar: {
+    'own.kicker': 'مفاجأة من فريق BAIagent',
+    'own.title': 'لا يمكن أن يكون!',
+    'own.message': 'ربما هذه هي الشركة الوحيدة التي لا تحتاج إلى أي نمو — كل شيء مثالي بالفعل! :)',
+    'own.action': 'تحقق من شركة أخرى',
+    'own.note': 'تعرفنا على أحد منتجاتنا. هذه دعابة ودية، وليست نتيجة تدقيق.',
+  },
+};
+
 const EXTRA = {
   en: { 'direction.revenue': 'Revenue', 'direction.cost': 'Efficiency', 'direction.offering': 'Offering', 'swot.strength': 'Strengths', 'swot.weakness': 'Weaknesses', 'swot.opportunity': 'Opportunities', 'swot.threat': 'Threats' },
   es: { 'direction.revenue': 'Ingresos', 'direction.cost': 'Eficiencia', 'direction.offering': 'Oferta', 'swot.strength': 'Fortalezas', 'swot.weakness': 'Debilidades', 'swot.opportunity': 'Oportunidades', 'swot.threat': 'Amenazas' },
@@ -74,4 +98,11 @@ const EXTRA = {
   ar: { 'direction.revenue': 'الإيرادات', 'direction.cost': 'الكفاءة', 'direction.offering': 'العرض', 'swot.strength': 'نقاط القوة', 'swot.weakness': 'نقاط الضعف', 'swot.opportunity': 'الفرص', 'swot.threat': 'التهديدات', 'chat.step.audit': 'تحليل الشركة', 'chat.step.direction': 'اختيار الاتجاه', 'chat.step.plan': 'خطة الاختبار', 'chat.step.pilot': 'تجربة قابلة للقياس', 'chat.step.documents': 'المستندات' },
 };
 
-export const UI_TRANSLATIONS = { ru, en: { ...en, ...EXTRA.en }, es: { ...es, ...EXTRA.es }, zh: { ...zh, ...EXTRA.zh }, hi: { ...hi, ...EXTRA.hi }, ar: { ...ar, ...EXTRA.ar } };
+export const UI_TRANSLATIONS = {
+  ru,
+  en: { ...en, ...EXTRA.en },
+  es: { ...es, ...EXTRA.es },
+  zh: { ...zh, ...EXTRA.zh, ...OWN_ECOSYSTEM.zh },
+  hi: { ...hi, ...EXTRA.hi, ...OWN_ECOSYSTEM.hi },
+  ar: { ...ar, ...EXTRA.ar, ...OWN_ECOSYSTEM.ar },
+};

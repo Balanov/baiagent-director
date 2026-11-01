@@ -5,6 +5,8 @@ import { buildPilotPlan } from '../shared/verification.js';
 import { normalizeUserHypothesis } from '../shared/hypothesis.js';
 import { DIRECTOR_WINDOWS_DOWNLOAD, DIRECTOR_RELEASE_VERSION } from '../shared/release.js';
 import InternationalDashboard from './InternationalDashboard.jsx';
+import OwnEcosystemResult from './OwnEcosystemResult.jsx';
+import { isOwnEcosystemWebsite } from '../shared/own-ecosystem.js';
 import { LanguageSwitcher, useLocale } from './locale.jsx';
 
 const DESKTOP = typeof window !== 'undefined' && Boolean(window.director?.isDesktop);
@@ -74,7 +76,12 @@ export default function InternationalApp() {
     event?.preventDefault();
     const targetUrl = String(requestedUrl || url).trim();
     if (!targetUrl || phase === 'working') return;
-    setUrl(targetUrl); setPhase('working'); setResult(null); setSelectedId(null); setError(''); setSaved(false); setProgress(null); setPercent(2);
+    setUrl(targetUrl);
+    if (isOwnEcosystemWebsite(targetUrl)) {
+      setPhase('own'); setResult(null); setSelectedId(null); setError(''); setSaved(false); setProgress(null);
+      return;
+    }
+    setPhase('working'); setResult(null); setSelectedId(null); setError(''); setSaved(false); setProgress(null); setPercent(2);
     try {
       const data = DESKTOP ? await window.director.research(targetUrl, language) : await researchOnWeb(targetUrl, language, setProgress);
       setResult(data); setSelectedId(data.analysis.opportunities[0]?.id || null); setPhase('result');
@@ -82,7 +89,7 @@ export default function InternationalApp() {
   }
   async function reset() {
     if (DESKTOP) await window.director.resetSession();
-    setPhase('idle'); setResult(null); setSelectedId(null); setProgress(null); setError(''); setSaved(false);
+    setPhase('idle'); setResult(null); setSelectedId(null); setProgress(null); setError(''); setSaved(false); setUrl('');
     setTimeout(() => inputRef.current?.focus(), 50);
   }
   async function startNewAudit(nextUrl) { if (DESKTOP) await window.director.resetSession(); await start(null, nextUrl); }
@@ -130,6 +137,7 @@ export default function InternationalApp() {
     {(phase === 'idle' || phase === 'error') && <main className="welcome"><section className="welcome-copy"><div className="eyebrow"><span className="live-dot" />{t('hero.eyebrow')}</div><h1>{t('hero.title')}<br /><span>{t('hero.titleAccent')}</span></h1><p className="lead">{t('hero.lead')}</p><form className="launch-form" onSubmit={start}><label htmlFor="intl-company-url">{t('hero.urlLabel')}</label><div className="url-control"><Globe2 size={21} /><input ref={inputRef} id="intl-company-url" type="text" inputMode="url" autoComplete="url" placeholder={t('hero.urlPlaceholder')} value={url} onChange={event => setUrl(event.target.value)} autoFocus /><button type="submit" disabled={!url.trim()}><span>{t('hero.submit')}</span><ArrowRight size={20} /></button></div></form>{error && <div className="inline-error" role="alert">{error}<span>{t('hero.errorHint')}</span></div>}<div className="promises"><span><Check size={15} />{t('promise.free')}</span><span><Check size={15} />{t('promise.noForms')}</span><span><Check size={15} />{t('promise.evidence')}</span></div>{!DESKTOP && <a className="hero-download" href={DIRECTOR_WINDOWS_DOWNLOAD} download><Download size={19} /><span><strong>{t('download.windows')}</strong><small>{t('download.windowsFull')}</small></span></a>}</section><section className="welcome-preview"><Visual active /><div className="preview-card"><div className="preview-top"><span>{t('preview.title')}</span><span className="preview-badge">{t('preview.badge')}</span></div>{[1, 2, 3].map(number => <div className="preview-step" key={number}><span className="step-number">0{number}</span><span>{t(`preview.item${number}`)}</span></div>)}<div className="preview-bottom"><ShieldCheck size={18} /><span>{t('preview.footer')}</span></div></div></section></main>}
     {(phase === 'idle' || phase === 'error') && !DESKTOP && <section className="downloads-section downloads-simple"><a className="simple-download-primary" href={DIRECTOR_WINDOWS_DOWNLOAD} download><Monitor size={22} /><span><strong>{t('download.windows')}</strong><small>{t('download.versionFree', { version: DIRECTOR_RELEASE_VERSION })}</small></span><Download size={18} /></a></section>}
     {phase === 'working' && <main className="working-view"><section className="working-hero"><div><div className="eyebrow"><span className="live-dot" />{t('working.eyebrow')}</div><h1>{t('working.title')} <span>{Math.round(percent)}%</span></h1><p>{friendlyStatus()}</p></div><Visual active /></section><div className="progress-track" aria-label={t('working.progress', { percent: Math.round(percent) })}><span style={{ width: `${percent}%` }} /></div><section className="activity-card"><div className="activity-heading"><FileSearch size={20} /><span>{t('working.activity')}</span><LoaderCircle className="spin" size={18} /></div><div className="activity-list">{steps.map((step, index) => <div className={`activity-row ${index < stepIndex ? 'is-done' : ''} ${index === stepIndex ? 'is-current' : ''}`} key={step.title}>{index < stepIndex ? <CheckCircle2 size={20} /> : index === stepIndex ? <LoaderCircle className="spin" size={20} /> : <span className="step-dot" />}<div><strong>{step.title}</strong><span>{index === stepIndex ? friendlyStatus() : step.text}</span></div></div>)}</div><div className="live-activity"><div className="live-activity-top"><span className="activity-pulse"><i /><i /><i /></span><div className="live-message"><small>{t('working.now')}</small><strong>{host(url)} · {friendlyStatus()}</strong></div><span className="elapsed">{t('working.elapsed', { time: timeLabel() })}</span></div><p>{t('working.realOnly')}</p></div><div className="activity-note"><ShieldCheck size={18} />{t('working.note')}</div></section></main>}
+    {phase === 'own' && <OwnEcosystemResult onReset={reset} />}
     {phase === 'result' && result && selected && <InternationalDashboard result={result} selected={selected} onSelect={id => { setSelectedId(id); setSaved(false); }} onReset={reset} onStartNewAudit={startNewAudit} onOpen={openSource} onSave={savePilot} saved={saved} desktop={DESKTOP} onAddDocuments={() => addDocuments(false)} onAddFolder={() => addDocuments(true)} onForgetFolder={forgetFolder} onCreateHypothesis={createHypothesis} adding={adding} folderBusy={folderBusy} error={error} />}
     <button className="developer-credit" onClick={() => openSource('https://balanov.pro/')} aria-label="Anton Balanov"><img src={`${BASE}images/balanov-logo.png`} alt="Anton Balanov" /></button>
   </div>;
