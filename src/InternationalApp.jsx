@@ -11,8 +11,10 @@ const DESKTOP = typeof window !== 'undefined' && Boolean(window.director?.isDesk
 const BASE = import.meta.env.BASE_URL;
 const TARGETS = { site: 14, pages: 36, external: 52, model: 68, thinking: 88, verification: 97 };
 const host = url => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; } };
+const isSafeResearchUrl = value => { try { const parsed = new URL(value); return ['http:', 'https:'].includes(parsed.protocol) && !/^(localhost|127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|0\.0\.0\.0|::1$|fe80:|fc00:|fd00:)/i.test(parsed.hostname); } catch { return false; } };
 
 async function researchOnWeb(url, language, onProgress) {
+  if (!isSafeResearchUrl(url)) throw new Error('Unsupported or unsafe URL');
   onProgress({ stage: 'site' });
   const endpoint = import.meta.env.VITE_RESEARCH_ENDPOINT || 'https://baiagent.ru/xray/api/research.php';
   const response = await fetch(`${endpoint}?url=${encodeURIComponent(url)}&lang=${encodeURIComponent(language)}`);
