@@ -1,12 +1,19 @@
-# BAIagent — AI business advisor
-
-**A free AI advisor that turns a company website, market evidence and local business documents into sourced hypotheses and a measurable pilot plan.**
+<div align="center">
+  <img src="docs/readme/hero.png" alt="BAIagent — a company website becomes sourced research and a measurable pilot plan, with the real application result" width="100%">
+  <p><strong>A free AI advisor that turns a company website, market evidence and local business documents into sourced hypotheses and a measurable pilot plan.</strong></p>
+  <p><a href="#what-it-does">Capabilities</a> · <a href="#important-boundaries">Boundaries</a> · <a href="#install-on-windows">Install</a> · <a href="https://baiagent.ru/xray/">Web audit</a> · <a href="README.ru.md">Русский</a></p>
+</div>
 
 BAIagent first investigates what the company sells, customer feedback, competitors and market signals. It then helps define a hypothesis, actions, owners, timing, budget assumptions, a success metric and a stop condition. The Windows app also supports selected local documents and a local Qwen model without requiring a cloud model API key.
 
 **[Download BAIagent 1.3.0 for Windows x64](https://github.com/Balanov/baiagent-director/releases/download/v1.3.0/BAIagent-Director-Setup-Windows-1.3.0-x64.exe)** · [Release notes](https://github.com/Balanov/baiagent-director/releases/tag/v1.3.0) · [Web audit](https://baiagent.ru/xray/) · [Russian documentation](README.ru.md)
 
 **SHA-256:** `3ffae27317bb26b6a620ea04990b4b8ec7ddaa0457ef3e8f9b064d16dace52be`
+
+<div align="center">
+  <img src="docs/readme/demo.gif" alt="BAIagent workflow from entering a company website to a sourced hypothesis and measurable pilot, using real application screens" width="100%">
+  <p><sub>Real application screens: website input, research result and pilot plan.</sub></p>
+</div>
 
 ![BAIagent research result](docs/images/director-result.png)
 
@@ -22,6 +29,11 @@ BAIagent first investigates what the company sells, customer feedback, competito
 - Works in six interface languages: Russian, English, Spanish, Chinese, Hindi and Arabic, including RTL layout.
 - Supports local TXT, Markdown, CSV, JSON, PDF and DOCX documents in the Windows app.
 - Uses an existing local Ollama installation or the downloadable Qwen3-4B model.
+
+<div align="center">
+  <img src="docs/readme/workflow.png" alt="BAIagent workflow: website, evidence, hypothesis, measurable pilot and stop condition, with an advisory rather than autonomous boundary" width="100%">
+  <p><sub>Sources before suggestions. Evidence remains separate from assumptions and recommendations.</sub></p>
+</div>
 
 ## Important boundaries
 
